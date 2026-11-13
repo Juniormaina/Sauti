@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
-  "requestFramePermissions": [],
+  "name": "SAUTI — Voice-First English Learning",
+  "description": "Don't just learn English. Find your voice. Interactive lessons, personalised CEFR pathways for all ages, and a Gemini-powered Voice Studio.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
