@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
-import { isPermittedOrigin } from './config/env.ts';
+import { env, isPermittedOrigin } from './config/env.ts';
+import { parseTrustProxyConfig, TrustProxyInput } from './config/trustProxy.ts';
 import authRoutes from './routes/auth.ts';
 import learningRoutes from './routes/learning.ts';
 import voiceRoutes from './routes/voice.ts';
@@ -7,10 +8,24 @@ import parentRoutes from './routes/parent.ts';
 import teacherRoutes from './routes/teacher.ts';
 import adminRoutes from './routes/admin.ts';
 
-export function createSautiApp() {
+export interface SautiAppOptions {
+  allowedOrigins?: readonly string[];
+  trustProxy?: TrustProxyInput;
+}
+
+export function createSautiApp(options?: SautiAppOptions) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+
+  const trustProxyConfig =
+    options?.trustProxy !== undefined
+      ? parseTrustProxyConfig(options.trustProxy)
+      : env.trustProxy;
+  const allowedOrigins = options?.allowedOrigins ?? env.allowedOrigins;
+
+  app.set('trust proxy', trustProxyConfig.expressValue);
+  app.set('sautiTrustProxy', trustProxyConfig);
+  app.set('sautiAllowedOrigins', allowedOrigins);
 
   // Baseline security headers (keep iframe-compatible: do NOT set X-Frame-Options)
   app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -23,7 +38,7 @@ export function createSautiApp() {
   // Cross-origin protection for mutating API requests
   app.use('/api', (req: Request, res: Response, next: NextFunction) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-      if (!isPermittedOrigin(req.headers.origin, req.headers.host, { allowMissingOrigin: true })) {
+      if (!isPermittedOrigin(req.headers.origin, { allowMissingOrigin: true, allowedOrigins })) {
         return res.status(403).json({ error: 'Request origin is not permitted.' });
       }
     }

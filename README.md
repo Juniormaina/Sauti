@@ -22,7 +22,9 @@ SAUTI is a full-stack, voice-first English learning platform serving learners ac
 ├── server.ts                         # HTTP + Vite/static entry point + WS attachment
 ├── server/
 │   ├── app.ts                        # Hardened Express app, headers, origin checks, JSON limits
-│   ├── config/env.ts                 # Env config, CSPRNG/strict SESSION_SECRET, origin allowlist
+│   ├── config/
+│   │   ├── env.ts                    # Env config, strict origin allowlist, CSPRNG/strict SESSION_SECRET
+│   │   └── trustProxy.ts             # Fail-safe trusted-proxy parsing & right-to-left client IP resolution
 │   ├── middleware/
 │   │   ├── auth.ts                   # Firebase ID token & HMAC session verification, RBAC
 │   │   └── rateLimit.ts              # Sliding-window per-user / per-IP rate limiter
@@ -32,10 +34,10 @@ SAUTI is a full-stack, voice-first English learning platform serving learners ac
 │   │   ├── authService.ts            # scrypt password hashing, HMAC tokens, Firebase user sync
 │   │   ├── authorizationService.ts   # Learner ownership & teacher classroom authorisation helpers
 │   │   ├── childSafetyService.ts     # Age-tier boundaries, Live safety, consent & transcript rules
-│   │   ├── liveTicketService.ts      # Single-use WS ticket issuance & active session revocation
+│   │   ├── liveTicketService.ts      # Origin-bound single-use WS ticket issuance & session revocation
 │   │   ├── progressService.ts        # Atomic XP increments & idempotent achievement awards
 │   │   └── seedService.ts            # Curriculum, lesson, activity, and achievement seeding
-│   └── ws/liveVoiceServer.ts         # Pre-upgrade authenticated /ws/live Gemini Live bridge
+│   └── ws/liveVoiceServer.ts         # Pre-upgrade authenticated & origin-verified /ws/live Gemini Live bridge
 ├── src/
 │   ├── app/layouts/                  # KidsLayout, TeenLayout, AdultLayout, PortalLayout
 │   ├── components/                   # PublicHeader, ResilientImage, ActivityRunner (15 types)
@@ -64,7 +66,9 @@ Configure via environment variables (see `.env.example`):
 - `GEMINI_TRANSCRIBE_MODEL` (default `gemini-3.5-transcribe`)
 - `GEMINI_LIVE_MODEL` (default `gemini-3.8-live`)
 - `APP_URL`: Hosted application URL used for permitted origin checks
-- `ALLOWED_ORIGINS`: Optional comma-separated list of additional permitted browser origins
+- `ALLOWED_ORIGINS`: Optional comma-separated list of additional permitted browser origins (explicit origins only; wildcards and arbitrary `Host` matching are rejected)
+- `TRUST_PROXY`: Reverse-proxy trust strategy for Express (`trust proxy`) and WebSocket client IP resolution (`false`, bounded hop count `1`–`10`, `loopback`/`linklocal`/`uniquelocal`, or comma-separated proxy IPs/CIDRs). Defaults to `false` in direct/dev environments and `loopback,linklocal,uniquelocal` on Cloud Run production (`K_SERVICE` + `NODE_ENV=production`). Invalid/overly permissive values (`true`, `*`, `0.0.0.0/0`, `::/0`) fail safely to `false`.
+- `WS_ALLOW_NON_BROWSER_CLIENTS` & `WS_NON_BROWSER_KEY` *(optional, disabled by default)*: Separate 16+ char `x-sauti-client-key` authentication mechanism if non-browser WebSocket clients are explicitly enabled (cannot be used when an `Origin` header is present).
 - `SESSION_SECRET`: HMAC signing key for email/password sessions & Live tickets (required 16+ char secret when `NODE_ENV=production`; ephemeral CSPRNG per process in dev/test when unset)
 - `SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`: Runtime Cloud SQL PostgreSQL pool credentials
 - `SQL_ADMIN_USER`, `SQL_ADMIN_PASSWORD`: Drizzle Kit schema management credentials
@@ -74,7 +78,7 @@ Configure via environment variables (see `.env.example`):
 ## Current Security, Safety & Reliability State
 
 - **Learner, Parent & Classroom Ownership (`authorizationService.ts`):** All learner dashboards, activity attempts, lesson completions, history, settings, and voice sessions enforce ownership (`learner.userId === authUser.id` or linked `parent.userId === authUser.id`), returning uniform `404` responses on missing or unrelated IDs. Teacher classroom reads and learner enrollments verify `classroom.teacherId`.
-- **Authenticated Live Voice WebSocket (`liveTicketService.ts`, `liveVoiceServer.ts`):** Clients obtain a 45-second single-use ticket from `POST /api/voice/live-ticket`. `/ws/live` verifies `Origin`, rejects legacy `?token=` URLs, atomically consumes the ticket, re-verifies learner/parent safety from PostgreSQL, enforces per-user/IP connection caps before upgrading, validates incoming frame sizes, and applies 15-minute max duration and 3-minute idle timeouts.
+- **Authenticated & Origin-Bound Live Voice WebSocket (`liveTicketService.ts`, `liveVoiceServer.ts`):** Clients obtain a 45-second single-use ticket from `POST /api/voice/live-ticket`, which strictly validates `Origin` against explicit `APP_URL`/`ALLOWED_ORIGINS` (and local dev origins in non-production) and binds the ticket to that normalized origin. `/ws/live` rejects missing or untrusted `Origin` headers (`403`), rejects legacy `?token=` URLs (`401`), atomically consumes the ticket while enforcing bidirectional `storedOrigin === requestOrigin` matching (`401`), re-verifies learner/parent safety from PostgreSQL, enforces per-user and trusted-proxy per-IP connection caps (`429`) before upgrading, validates incoming frame sizes, and applies 15-minute max duration and 3-minute idle timeouts.
 - **Child Safety & Age-Tier Isolation (`childSafetyService.ts`):**
   - Under-13 learners (`little_voices`, `young_explorers`) cannot self-register as `individual` accounts and require a linked parent account with active consent.
   - All three minor tiers (`little_voices`, `young_explorers`, `teen_voices` when parent-linked) obey `allowAiLiveForChildren`, mode restrictions, course environment boundaries, and prompt safety guardrails; minor accounts cannot self-promote into adult environments.
@@ -117,13 +121,13 @@ npm start        # Starts server directly via tsx server.ts
 
 ### Automated Test Suite Summary
 
-All **20 / 20** tests pass (`npm test` against `createSautiApp()`, `attachLiveVoiceWebSocket`, and Cloud SQL PostgreSQL, with test rows cleaned up on teardown):
+All **22 / 22** tests pass (`npm test` against `createSautiApp()`, `attachLiveVoiceWebSocket`, and Cloud SQL PostgreSQL, with test rows cleaned up on teardown):
 
 | Test File | Tests | Scope Verified |
 | --- | --- | --- |
-| `tests/security-unit.test.ts` | 7 | Origin allowlist, non-revoked guardian consent logic, under-13/teen Live safety rules, environment transitions & adult course isolation, transcript retention/opt-out rules, single-use/expiring/origin-bound Live tickets, sliding-window `429` rate limiting |
+| `tests/security-unit.test.ts` | 8 | Explicit Origin allowlist (missing/unlisted/wildcard rejections), non-revoked guardian consent logic, under-13/teen Live safety rules, environment transitions & adult course isolation, transcript retention/opt-out rules, origin-bound single-use/expiring Live tickets, fail-safe `TRUST_PROXY` validation & anti-spoofing IP resolution, sliding-window `429` rate limiting |
 | `tests/ownership-idor.test.ts` | 8 | Learner self-access, cross-learner IDOR (`404` uniform), parent access to nullable-`userId` child, cross-parent IDOR, unauthenticated `401` rejections, teacher classroom IDOR, admin safe role responses & self-demotion block, atomic single-use password reset |
-| `tests/websocket-childsafety-consent.test.ts` | 3 | Under-13 individual registration block, explicit guardian consent grant/revoke + `guardian_consent_events` audit rows, Live gating across `little_voices`/`young_explorers`/`teen_voices`, adult mode/course/environment promotion blocks, WS pre-upgrade `401`/`403` checks, single-use ticket consumption, immediate WS termination on consent revocation |
+| `tests/websocket-childsafety-consent.test.ts` | 4 | Under-13 individual registration block, explicit guardian consent grant/revoke + `guardian_consent_events` audit rows, Live gating across `little_voices`/`young_explorers`/`teen_voices`, adult mode/course/environment promotion blocks, WS pre-upgrade `401`/`403` checks (missing/untrusted Origin, Origin A->B ticket mismatch), single-use ticket consumption, immediate WS termination on consent revocation, WS per-IP/per-user limits resisting spoofed `X-Forwarded-For` & trusted-proxy routing |
 | `tests/xp-ratelimit-validation.test.ts` | 2 | Premature lesson completion block (`400`), repeat activity/lesson/achievement XP anti-farming, cross-origin CSRF rejection (`403`), TTS/dialogue bounds, transcribe MIME allowlist & 3 MB size enforcement (`400`/`413`), TTS `429` rate limit |
 
 ---
@@ -131,16 +135,23 @@ All **20 / 20** tests pass (`npm test` against `createSautiApp()`, `attachLiveVo
 ## Production Deployment Requirements
 
 1. **Strict Session Secret (`SESSION_SECRET`):** When `NODE_ENV=production`, `server/config/env.ts` refuses to start if `SESSION_SECRET` is missing, shorter than 16 characters, or matches known placeholder values (`change-this-session-secret-in-production`, `sauti-dev-session-secret-change-in-prod`). Generate a high-entropy secret (`openssl rand -base64 32`).
-2. **Permitted Origins (`APP_URL`, `ALLOWED_ORIGINS`):** Set `APP_URL` to the public HTTPS deployment URL and `ALLOWED_ORIGINS` to any additional trusted origins. Mutating API requests (`POST`/`PUT`/`PATCH`/`DELETE`) and `/ws/live` WebSocket upgrades enforce origin validation.
-3. **Database Connectivity & Schema:** Ensure Cloud SQL PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`) is reachable and schema is synced via `src/db/schema.ts`.
-4. **Server-Side Gemini & Firebase Config:** Provide `GEMINI_API_KEY` on the server (never in `VITE_*` variables) and configure Firebase Authentication for Google Sign-In (`firebase-applet-config.json`).
-5. **Build & Start Sequence:**
+2. **Permitted Origins (`APP_URL`, `ALLOWED_ORIGINS`):** Set `APP_URL` to the public HTTPS deployment URL and `ALLOWED_ORIGINS` to any additional trusted origins. In production (`NODE_ENV=production`), only explicitly listed origins are permitted (no `Host` header fallback, no wildcards, no automatic `localhost`). Both `POST /api/voice/live-ticket` and `/ws/live` reject missing or unlisted `Origin` headers with `403`.
+3. **Production Reverse-Proxy Configuration (`TRUST_PROXY`):**
+   - Configure the reverse proxy (Google Cloud Run / GFE, Nginx, Envoy, or AWS ALB) to **append** the real connecting client IP to `X-Forwarded-For` (or overwrite it at the perimeter) and forward WebSocket `Upgrade` / `Connection` / `Origin` headers intact.
+   - Set `TRUST_PROXY` to match your proxy topology:
+     - **Cloud Run / VPC Ingress / Local Reverse Proxy:** `TRUST_PROXY="loopback,linklocal,uniquelocal"` (automatic default when `K_SERVICE` is set in `NODE_ENV=production`). Only internal proxy peers may supply forwarded headers; any leftmost client-spoofed `X-Forwarded-For` entries are ignored via right-to-left traversal.
+     - **Dedicated Single Reverse Proxy (e.g., Nginx on host or fixed LB IP):** `TRUST_PROXY="127.0.0.1"` or exact proxy CIDR (preferred over hop-count `TRUST_PROXY="1"` because direct connections that bypass the proxy cannot spoof `X-Forwarded-For`).
+     - **Direct / No Reverse Proxy:** Leave `TRUST_PROXY` unset or `"false"` so `X-Forwarded-For` is ignored completely.
+   - Never use `TRUST_PROXY="true"`, `"*"`, or `"0.0.0.0/0"` (rejected as invalid; server fails safely to `false`).
+4. **Database Connectivity & Schema:** Ensure Cloud SQL PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`) is reachable and schema is synced via `src/db/schema.ts`.
+5. **Server-Side Gemini & Firebase Config:** Provide `GEMINI_API_KEY` on the server (never in `VITE_*` variables) and configure Firebase Authentication for Google Sign-In (`firebase-applet-config.json`).
+6. **Build & Start Sequence:**
    ```bash
    npm run build
    NODE_ENV=production npm start
    ```
    In production (`NODE_ENV=production`), `server.ts` mounts `createSautiApp()`, serves the static bundle from `dist/` with SPA fallback, and attaches `/ws/live` on port `3000` (or `PORT`).
-6. **Child Safety & Multi-Instance Scaling Note:**
+7. **Child Safety & Multi-Instance Scaling Note:**
    - Voice recordings are processed transiently for transcription and never stored permanently as raw audio files.
    - Pronunciation Coach compares speech-to-text transcripts against target text word-by-word without fabricating acoustic phonetic percentages.
    - When `GEMINI_API_KEY` is absent, TTS falls back transparently to browser `speechSynthesis` and Live Conversations enter clearly labelled Demo Mode.

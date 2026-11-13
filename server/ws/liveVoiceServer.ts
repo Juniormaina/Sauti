@@ -3,7 +3,14 @@ import { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { LiveServerMessage, Modality } from '@google/genai';
 import { eq } from 'drizzle-orm';
-import { env, isGeminiConfigured, isPermittedOrigin } from '../config/env.ts';
+import {
+  env,
+  isAuthenticatedNonBrowserClient,
+  isGeminiConfigured,
+  isPermittedOrigin,
+  normalizeOriginHeader,
+} from '../config/env.ts';
+import { parseTrustProxyConfig, resolveClientIp, TrustProxyInput } from '../config/trustProxy.ts';
 import { getGeminiClient, sanitizeAiErrorMessage } from '../services/aiVoiceService.ts';
 import { db } from '../../src/db/index.ts';
 import { learnerProfiles, parentProfiles } from '../../src/db/schema.ts';
@@ -27,6 +34,16 @@ const SESSION_MAX_DURATION_MS = 15 * 60 * 1000;
 const SESSION_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const SAFETY_RECHECK_INTERVAL_MS = 30 * 1000;
 
+export interface LiveVoiceWsOptions {
+  allowedOrigins?: readonly string[];
+  trustProxy?: TrustProxyInput;
+  nonBrowserWs?: { enabled: boolean; clientKey: string };
+  createUpstreamSession?: () => Promise<{
+    sendRealtimeInput: (input: unknown) => void;
+    close: () => void;
+  }>;
+}
+
 function rejectUpgrade(socket: Duplex, statusCode: number, reason: string) {
   const statusText =
     statusCode === 401
@@ -44,17 +61,6 @@ function rejectUpgrade(socket: Duplex, statusCode: number, reason: string) {
     // Ignore socket write errors on teardown
   }
   socket.destroy();
-}
-
-function getUpgradeClientIp(request: IncomingMessage): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim().length > 0) {
-    return forwarded.split(',')[0].trim();
-  }
-  if (Array.isArray(forwarded) && forwarded[0]) {
-    return forwarded[0].split(',')[0].trim();
-  }
-  return request.socket?.remoteAddress || 'unknown';
 }
 
 function buildLiveSystemInstruction(
@@ -79,11 +85,23 @@ interface AuthedUpgradeContext {
   ip: string;
 }
 
-export function attachLiveVoiceWebSocket(server: HttpServer) {
+export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoiceWsOptions) {
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: MAX_WS_PAYLOAD_BYTES,
   });
+
+  const allowedOrigins = options?.allowedOrigins ?? env.allowedOrigins;
+  const trustProxyConfig =
+    options?.trustProxy !== undefined
+      ? parseTrustProxyConfig(options.trustProxy)
+      : env.trustProxy;
+
+  if (options?.trustProxy !== undefined && !trustProxyConfig.isValid) {
+    console.warn(
+      `Invalid WebSocket trustProxy configuration (${trustProxyConfig.reason || 'invalid'}); failing safely with proxy trust disabled.`
+    );
+  }
 
   server.on('upgrade', async (request, socket, head) => {
     let reqUrl: URL;
@@ -96,25 +114,37 @@ export function attachLiveVoiceWebSocket(server: HttpServer) {
 
     if (reqUrl.pathname !== '/ws/live') return;
 
-    // 1. Validate Origin before upgrading
-    if (!isPermittedOrigin(request.headers.origin, request.headers.host, { allowMissingOrigin: true })) {
-      rejectUpgrade(socket, 403, 'Origin not permitted');
-      return;
+    // 1. Strictly enforce Origin allowlist for browser clients before upgrading.
+    // Non-browser clients require explicit opt-in config + separate client key authentication.
+    const isNonBrowserAuthenticated = isAuthenticatedNonBrowserClient(
+      request.headers,
+      options?.nonBrowserWs
+    );
+
+    let requestOrigin: string | null = null;
+    if (!isNonBrowserAuthenticated) {
+      if (!isPermittedOrigin(request.headers.origin, { allowMissingOrigin: false, allowedOrigins })) {
+        rejectUpgrade(socket, 403, 'Origin not permitted');
+        return;
+      }
+      requestOrigin = normalizeOriginHeader(request.headers.origin);
+      if (!requestOrigin) {
+        rejectUpgrade(socket, 403, 'Origin not permitted');
+        return;
+      }
     }
 
-    // 2. Reject legacy query-param long-lived tokens or missing ticket before upgrade
+    // 2. Reject legacy query-param long-lived tokens or missing/invalid ticket before upgrade
     if (reqUrl.searchParams.has('token')) {
       rejectUpgrade(socket, 401, 'Bearer tokens in WebSocket URL are not permitted. Use a single-use ticket.');
       return;
     }
 
     const rawTicket = reqUrl.searchParams.get('ticket');
-    const requestOrigin =
-      typeof request.headers.origin === 'string' && request.headers.origin.length > 0
-        ? request.headers.origin
-        : null;
-
-    const ticket = consumeLiveTicket(rawTicket, requestOrigin);
+    const ticket = consumeLiveTicket(rawTicket, {
+      requestOrigin,
+      isNonBrowserAuthenticated,
+    });
     if (!ticket) {
       rejectUpgrade(socket, 401, 'Invalid, expired, or already used Live Voice ticket.');
       return;
@@ -149,8 +179,8 @@ export function attachLiveVoiceWebSocket(server: HttpServer) {
         return;
       }
 
-      // 4. Enforce connection limits per user and per IP before upgrade
-      const ip = getUpgradeClientIp(request);
+      // 4. Enforce connection limits per user and per resolved client IP before upgrade
+      const ip = resolveClientIp(request, trustProxyConfig);
       if (
         countActiveConnectionsForUser(ticket.userId) >= MAX_CONCURRENT_PER_USER ||
         countActiveConnectionsForIp(ip) >= MAX_CONCURRENT_PER_IP
@@ -271,17 +301,28 @@ export function attachLiveVoiceWebSocket(server: HttpServer) {
       clientWs.on('close', cleanup);
       clientWs.on('error', cleanup);
 
-      const ai = getGeminiClient();
-      if (!ai || !isGeminiConfigured()) {
-        sendJson({
-          type: 'demo_mode',
-          message:
-            'Gemini API key is not configured on the server. Switching to clearly labelled local Demo Mode.',
-        });
-        cleanup();
-        clientWs.close(1000, 'Demo mode');
-        return;
-      }
+      if (options?.createUpstreamSession) {
+        try {
+          session = await options.createUpstreamSession();
+          sendJson({ type: 'ready', model: env.models.live });
+        } catch {
+          sendJson({ type: 'error', message: 'Unable to open Live voice upstream session.' });
+          cleanup();
+          clientWs.close();
+          return;
+        }
+      } else {
+        const ai = getGeminiClient();
+        if (!ai || !isGeminiConfigured()) {
+          sendJson({
+            type: 'demo_mode',
+            message:
+              'Gemini API key is not configured on the server. Switching to clearly labelled local Demo Mode.',
+          });
+          cleanup();
+          clientWs.close(1000, 'Demo mode');
+          return;
+        }
 
       try {
         const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
@@ -343,14 +384,15 @@ export function attachLiveVoiceWebSocket(server: HttpServer) {
             },
           },
         });
-      } catch (err: unknown) {
-        sendJson({
-          type: 'error',
-          message: sanitizeAiErrorMessage(err, 'Unable to establish Gemini Live API connection.'),
-        });
-        cleanup();
-        clientWs.close();
-        return;
+        } catch (err: unknown) {
+          sendJson({
+            type: 'error',
+            message: sanitizeAiErrorMessage(err, 'Unable to establish Gemini Live API connection.'),
+          });
+          cleanup();
+          clientWs.close();
+          return;
+        }
       }
 
       clientWs.on('message', (rawData) => {

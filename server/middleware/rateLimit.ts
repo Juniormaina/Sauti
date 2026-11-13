@@ -1,4 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
+import { env } from '../config/env.ts';
+import { ParsedTrustProxyConfig, resolveClientIp } from '../config/trustProxy.ts';
 
 export interface RateLimitOptions {
   name: string;
@@ -14,14 +16,8 @@ export interface RateLimiterMiddleware {
 }
 
 export function getClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim().length > 0) {
-    return forwarded.split(',')[0].trim();
-  }
-  if (Array.isArray(forwarded) && forwarded[0]) {
-    return forwarded[0].split(',')[0].trim();
-  }
-  return req.socket?.remoteAddress || req.ip || 'unknown';
+  const trustConfig = (req.app?.get('sautiTrustProxy') as ParsedTrustProxyConfig | undefined) ?? env.trustProxy;
+  return resolveClientIp(req, trustConfig);
 }
 
 export function createRateLimiter(options: RateLimitOptions): RateLimiterMiddleware {

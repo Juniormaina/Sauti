@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
-import { isPermittedOrigin } from '../server/config/env.ts';
+import { isAuthenticatedNonBrowserClient, isPermittedOrigin } from '../server/config/env.ts';
+import { parseTrustProxyConfig, resolveClientIp } from '../server/config/trustProxy.ts';
 import {
   canLearnerAccessCourseEnvironment,
   evaluateLiveVoiceSafety,
@@ -19,13 +20,50 @@ import {
 } from '../server/services/liveTicketService.ts';
 import { createRateLimiter } from '../server/middleware/rateLimit.ts';
 
-test('Origin allowlist rejects cross-origin requests and accepts same-host/localhost', () => {
-  assert.equal(isPermittedOrigin('http://localhost:3000', 'localhost:3000'), true);
-  assert.equal(isPermittedOrigin('https://app.example.com', 'app.example.com'), true);
-  assert.equal(isPermittedOrigin('https://evil.example', 'localhost:3000'), false);
-  assert.equal(isPermittedOrigin('javascript:alert(1)', 'localhost:3000'), false);
-  assert.equal(isPermittedOrigin(undefined, 'localhost:3000', { allowMissingOrigin: false }), false);
-  assert.equal(isPermittedOrigin(undefined, 'localhost:3000', { allowMissingOrigin: true }), true);
+test('Origin allowlist enforces explicit trusted origins and rejects missing/unlisted/wildcard origins', () => {
+  const allowlist = ['http://localhost:3000', 'https://ais-dev-example.run.app'];
+
+  assert.equal(
+    isPermittedOrigin('http://localhost:3000', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    true
+  );
+  assert.equal(
+    isPermittedOrigin('https://ais-dev-example.run.app', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    true
+  );
+  // Unlisted origins must be rejected even if another origin looks similar
+  assert.equal(
+    isPermittedOrigin('https://app.example.com', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin('https://evil.example', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin('javascript:alert(1)', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin('*', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin('null', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin(undefined, { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin('', { allowMissingOrigin: false, allowedOrigins: allowlist }),
+    false
+  );
+  assert.equal(
+    isPermittedOrigin(undefined, { allowMissingOrigin: true, allowedOrigins: allowlist }),
+    true
+  );
 });
 
 test('Guardian consent checks require non-revoked accepted consent', () => {
@@ -152,9 +190,26 @@ test('Transcript storage respects saveTranscripts and retention days', () => {
   );
 });
 
-test('Live tickets are single-use, bound to origin, and expire properly', () => {
+test('Live tickets require origin binding, never skip missing origin checks, are single-use, and expire', () => {
   clearLiveTicketStoreForTests();
-  const { ticket } = issueLiveTicket({
+
+  // Issuing browser ticket without valid origin must throw
+  assert.throws(() =>
+    issueLiveTicket({
+      userId: 1,
+      learnerId: 2,
+      parentId: null,
+      environment: 'young_adults',
+      ageRange: '18-25',
+      cefrLevel: 'B1',
+      mode: 'Everyday conversations',
+      voiceName: 'Zephyr',
+      origin: null,
+    })
+  );
+
+  // Origin A ticket rejected when consumed from Origin B
+  const { ticket: originATicket } = issueLiveTicket({
     userId: 1,
     learnerId: 2,
     parentId: null,
@@ -165,12 +220,25 @@ test('Live tickets are single-use, bound to origin, and expire properly', () => 
     voiceName: 'Zephyr',
     origin: 'http://localhost:3000',
   });
-
-  // Origin mismatch rejected without invalidating or wait—it consumes atomically and rejects
-  assert.equal(consumeLiveTicket(ticket, 'https://evil.example'), null);
+  assert.equal(consumeLiveTicket(originATicket, { requestOrigin: 'https://evil.example' }), null);
   // Already consumed/rejected ticket cannot be reused
-  assert.equal(consumeLiveTicket(ticket, 'http://localhost:3000'), null);
+  assert.equal(consumeLiveTicket(originATicket, { requestOrigin: 'http://localhost:3000' }), null);
 
+  // Missing requestOrigin on consumption must be rejected even for valid ticket
+  const { ticket: validTicketMissingReqOrigin } = issueLiveTicket({
+    userId: 1,
+    learnerId: 2,
+    parentId: null,
+    environment: 'young_adults',
+    ageRange: '18-25',
+    cefrLevel: 'B1',
+    mode: 'Everyday conversations',
+    voiceName: 'Zephyr',
+    origin: 'http://localhost:3000',
+  });
+  assert.equal(consumeLiveTicket(validTicketMissingReqOrigin, { requestOrigin: null }), null);
+
+  // Exact matching origin succeeds once, then single-use blocks replay
   const { ticket: validTicket } = issueLiveTicket({
     userId: 1,
     learnerId: 2,
@@ -182,11 +250,10 @@ test('Live tickets are single-use, bound to origin, and expire properly', () => 
     voiceName: 'Zephyr',
     origin: 'http://localhost:3000',
   });
-  const payload = consumeLiveTicket(validTicket, 'http://localhost:3000');
+  const payload = consumeLiveTicket(validTicket, { requestOrigin: 'http://localhost:3000' });
   assert.ok(payload);
   assert.equal(payload.learnerId, 2);
-  // Single-use: second consume returns null
-  assert.equal(consumeLiveTicket(validTicket, 'http://localhost:3000'), null);
+  assert.equal(consumeLiveTicket(validTicket, { requestOrigin: 'http://localhost:3000' }), null);
 
   // Expired ticket rejected
   const { ticket: expiredTicket } = issueLiveTicket({
@@ -198,10 +265,77 @@ test('Live tickets are single-use, bound to origin, and expire properly', () => 
     cefrLevel: 'B1',
     mode: 'Everyday conversations',
     voiceName: 'Zephyr',
-    origin: null,
+    origin: 'http://localhost:3000',
     ttlMs: -10,
   });
-  assert.equal(consumeLiveTicket(expiredTicket, null), null);
+  assert.equal(consumeLiveTicket(expiredTicket, { requestOrigin: 'http://localhost:3000' }), null);
+
+  // Non-browser authentication cannot bypass browser Origin checks when Origin header is present
+  assert.equal(
+    isAuthenticatedNonBrowserClient(
+      { origin: 'https://evil.example', 'x-sauti-client-key': 'super-secret-non-browser-key' },
+      { enabled: true, clientKey: 'super-secret-non-browser-key' }
+    ),
+    false
+  );
+  assert.equal(
+    isAuthenticatedNonBrowserClient(
+      { 'x-sauti-client-key': 'super-secret-non-browser-key' },
+      { enabled: true, clientKey: 'super-secret-non-browser-key' }
+    ),
+    true
+  );
+});
+
+test('Trust proxy configuration fails safely when invalid and resists X-Forwarded-For spoofing', () => {
+  for (const invalidVal of [true, 'true', '*', '0.0.0.0/0', '::/0', -1, 'invalid-cidr', '999.999.999.999', 99]) {
+    const parsed = parseTrustProxyConfig(invalidVal as any);
+    assert.equal(parsed.isValid, false, `Expected invalid for ${String(invalidVal)}`);
+    assert.equal(parsed.mode, 'none');
+    assert.equal(parsed.expressValue, false);
+  }
+
+  // Disabled proxy trust ignores X-Forwarded-For completely
+  assert.equal(
+    resolveClientIp(
+      { headers: { 'x-forwarded-for': '1.2.3.4' }, socket: { remoteAddress: '198.51.100.20' } as any },
+      false
+    ),
+    '198.51.100.20'
+  );
+
+  // Trusted loopback proxy ignores X-Forwarded-For if TCP peer is NOT loopback
+  assert.equal(
+    resolveClientIp(
+      { headers: { 'x-forwarded-for': '1.2.3.4' }, socket: { remoteAddress: '198.51.100.20' } as any },
+      'loopback'
+    ),
+    '198.51.100.20'
+  );
+
+  // Behind trusted loopback proxy, attacker prepending spoofed XFF still resolves to proxy-appended real IP
+  assert.equal(
+    resolveClientIp(
+      {
+        headers: { 'x-forwarded-for': '9.9.9.9, 203.0.113.50' },
+        socket: { remoteAddress: '::ffff:127.0.0.1' } as any,
+      },
+      'loopback, uniquelocal'
+    ),
+    '203.0.113.50'
+  );
+
+  // Behind 1-hop trust, rightmost untrusted entry is used rather than leftmost spoofed entry
+  assert.equal(
+    resolveClientIp(
+      {
+        headers: { 'x-forwarded-for': '9.9.9.9, 203.0.113.77' },
+        socket: { remoteAddress: '127.0.0.1' } as any,
+      },
+      1
+    ),
+    '203.0.113.77'
+  );
 });
 
 test('Sliding-window rate limiter enforces maxRequests and sets 429 Retry-After', async () => {

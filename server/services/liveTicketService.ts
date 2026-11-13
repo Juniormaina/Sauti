@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { env } from '../config/env.ts';
+import { env, normalizeOriginHeader } from '../config/env.ts';
+
+export type LiveClientType = 'browser' | 'non_browser';
 
 export interface LiveTicketPayload {
   jti: string;
@@ -13,6 +15,7 @@ export interface LiveTicketPayload {
   mode: string;
   voiceName: string;
   origin: string | null;
+  clientType: LiveClientType;
   expiresAt: number;
 }
 
@@ -34,8 +37,21 @@ function signTicketId(jti: string): string {
 }
 
 export function issueLiveTicket(
-  params: Omit<LiveTicketPayload, 'jti' | 'expiresAt'> & { ttlMs?: number }
+  params: Omit<LiveTicketPayload, 'jti' | 'expiresAt' | 'clientType'> & {
+    clientType?: LiveClientType;
+    ttlMs?: number;
+  }
 ): { ticket: string; expiresAt: number } {
+  const clientType: LiveClientType = params.clientType ?? 'browser';
+  let boundOrigin: string | null = null;
+
+  if (clientType === 'browser') {
+    boundOrigin = normalizeOriginHeader(params.origin);
+    if (!boundOrigin) {
+      throw new Error('Browser Live Voice tickets must be bound to a valid HTTP(S) Origin.');
+    }
+  }
+
   const jti = crypto.randomBytes(24).toString('base64url');
   const expiresAt = Date.now() + (params.ttlMs ?? TICKET_TTL_MS);
 
@@ -49,7 +65,8 @@ export function issueLiveTicket(
     cefrLevel: params.cefrLevel,
     mode: params.mode,
     voiceName: params.voiceName,
-    origin: params.origin,
+    origin: boundOrigin,
+    clientType,
     expiresAt,
   };
 
@@ -63,7 +80,10 @@ export function issueLiveTicket(
 
 export function consumeLiveTicket(
   rawTicket: string | null | undefined,
-  requestOrigin?: string | null
+  options: {
+    requestOrigin?: string | null;
+    isNonBrowserAuthenticated?: boolean;
+  } = {}
 ): LiveTicketPayload | null {
   if (!rawTicket || typeof rawTicket !== 'string') return null;
   const parts = rawTicket.split('.');
@@ -89,7 +109,18 @@ export function consumeLiveTicket(
     return null;
   }
 
-  if (record.origin && requestOrigin && record.origin !== requestOrigin) {
+  if (record.clientType === 'non_browser') {
+    // Non-browser tickets may never be redeemed from a browser Origin or without non-browser auth.
+    if (!options.isNonBrowserAuthenticated || options.requestOrigin) {
+      return null;
+    }
+    return record;
+  }
+
+  // Strict bidirectional origin check: never skip comparison if either origin is missing.
+  const storedOrigin = normalizeOriginHeader(record.origin);
+  const incomingOrigin = normalizeOriginHeader(options.requestOrigin);
+  if (!storedOrigin || !incomingOrigin || storedOrigin !== incomingOrigin) {
     return null;
   }
 

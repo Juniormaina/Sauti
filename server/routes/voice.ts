@@ -3,7 +3,13 @@ import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../src/db/index.ts';
 import { conversationSessions, voicePracticeSessions } from '../../src/db/schema.ts';
-import { env, isGeminiConfigured, isPermittedOrigin } from '../config/env.ts';
+import {
+  env,
+  isAuthenticatedNonBrowserClient,
+  isGeminiConfigured,
+  isPermittedOrigin,
+  normalizeOriginHeader,
+} from '../config/env.ts';
 import { AuthRequest, optionalAuth, requireAuth } from '../middleware/auth.ts';
 import { createRateLimiter, getClientIp } from '../middleware/rateLimit.ts';
 import { sanitizeAiErrorMessage, voiceProvider } from '../services/aiVoiceService.ts';
@@ -235,8 +241,18 @@ router.post('/transcribe', requireAuth, transcribeRateLimiter, async (req: AuthR
 
 router.post('/live-ticket', requireAuth, liveTicketRateLimiter, async (req: AuthRequest, res) => {
   try {
-    if (!isPermittedOrigin(req.headers.origin, req.headers.host, { allowMissingOrigin: true })) {
-      return res.status(403).json({ error: 'Disallowed request origin for Live Voice ticket.' });
+    const allowedOrigins = (req.app?.get('sautiAllowedOrigins') as readonly string[] | undefined) ?? env.allowedOrigins;
+    const isNonBrowserAuthed = isAuthenticatedNonBrowserClient(req.headers);
+
+    let boundOrigin: string | null = null;
+    if (!isNonBrowserAuthed) {
+      if (!isPermittedOrigin(req.headers.origin, { allowMissingOrigin: false, allowedOrigins })) {
+        return res.status(403).json({ error: 'Missing or unpermitted Origin header for Live Voice ticket.' });
+      }
+      boundOrigin = normalizeOriginHeader(req.headers.origin);
+      if (!boundOrigin) {
+        return res.status(403).json({ error: 'Invalid Origin header for Live Voice ticket.' });
+      }
     }
 
     const parsed = liveTicketSchema.safeParse(req.body || {});
@@ -258,11 +274,6 @@ router.post('/live-ticket', requireAuth, liveTicketRateLimiter, async (req: Auth
       });
     }
 
-    const requestOrigin =
-      typeof req.headers.origin === 'string' && req.headers.origin.length > 0
-        ? req.headers.origin
-        : null;
-
     const issued = issueLiveTicket({
       userId: req.authUser!.id,
       learnerId: learner.id,
@@ -272,7 +283,8 @@ router.post('/live-ticket', requireAuth, liveTicketRateLimiter, async (req: Auth
       cefrLevel: learner.cefrLevel,
       mode: parsed.data.mode,
       voiceName: parsed.data.voiceName,
-      origin: requestOrigin,
+      origin: boundOrigin,
+      clientType: isNonBrowserAuthed ? 'non_browser' : 'browser',
     });
 
     return res.status(201).json({
