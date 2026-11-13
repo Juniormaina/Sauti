@@ -12,7 +12,7 @@ SAUTI is a full-stack, voice-first English learning platform serving learners ac
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router, Motion for React, Lucide React, Zustand, React Hook Form + Zod, Firebase Auth (`signInWithPopup` Google Sign-In)
 - **Backend:** Node.js, Express, TypeScript (`tsx`), WebSockets (`ws`)
 - **Database:** Cloud SQL for PostgreSQL + Drizzle ORM (`src/db/schema.ts`)
-- **AI & Voice:** `@google/genai` (`v1beta` HTTP options for TTS/dialogue; configurable `gemini-4-hydrogen`, `gemini-3.8-flash-lite-tts`, `gemini-3.8-flash-tts`, `gemini-3.5-transcribe`, `gemini-3.8-live`)
+- **AI & Voice:** `@google/genai` (`v1beta` HTTP options for TTS/dialogue; strictly env-configured independent `GEMINI_TEXT_MODEL`, `GEMINI_TTS_MODEL`, `GEMINI_MULTI_TTS_MODEL`, `GEMINI_TRANSCRIBE_MODEL`, and `GEMINI_LIVE_MODEL` with zero hardcoded fallbacks, plus browser `SpeechSynthesis` and Demo Mode fallbacks)
 
 ---
 
@@ -59,12 +59,13 @@ SAUTI is a full-stack, voice-first English learning platform serving learners ac
 
 Configure via environment variables (see `.env.example`):
 
-- `GEMINI_API_KEY`: Server-side Gemini API key (never exposed to browser code)
-- `GEMINI_TEXT_MODEL` (default `gemini-4-hydrogen`)
-- `GEMINI_TTS_MODEL` (default `gemini-3.8-flash-lite-tts`)
-- `GEMINI_MULTI_TTS_MODEL` (default `gemini-3.8-flash-tts`)
-- `GEMINI_TRANSCRIBE_MODEL` (default `gemini-3.5-transcribe`)
-- `GEMINI_LIVE_MODEL` (default `gemini-3.8-live`)
+- `GEMINI_API_KEY`: Server-side Gemini API key (never exposed to browser code; leave unset for zero-budget Demo Mode / browser fallback)
+- `GEMINI_TEXT_MODEL`: Independent model identifier for pronunciation coaching, open-answer evaluation, and conversation summaries (no hardcoded fallback)
+- `GEMINI_TTS_MODEL`: Independent model identifier for single-speaker server TTS (falls back to browser `SpeechSynthesis` when unset)
+- `GEMINI_MULTI_TTS_MODEL`: Independent model identifier for dual-speaker dialogue TTS (no hardcoded fallback)
+- `GEMINI_TRANSCRIBE_MODEL`: Independent model identifier for server audio transcription (no hardcoded fallback)
+- `GEMINI_LIVE_MODEL`: Independent model identifier for `/ws/live` real-time voice sessions (enters Demo Mode when unset)
+- `AI_STRICT_MODEL_VALIDATION`: Optional `"true"` flag to fail server startup if `GEMINI_API_KEY` or any `GEMINI_*_MODEL` variable is missing
 - `APP_URL`: Hosted application URL used for permitted origin checks
 - `ALLOWED_ORIGINS`: Optional comma-separated list of additional permitted browser origins (explicit origins only; wildcards and arbitrary `Host` matching are rejected)
 - `TRUST_PROXY`: Reverse-proxy trust strategy for Express (`trust proxy`) and WebSocket client IP resolution (`false`, bounded hop count `1`–`10`, `loopback`/`linklocal`/`uniquelocal`, or comma-separated proxy IPs/CIDRs). Defaults to `false` in direct/dev environments and `loopback,linklocal,uniquelocal` on Cloud Run production (`K_SERVICE` + `NODE_ENV=production`). Invalid/overly permissive values (`true`, `*`, `0.0.0.0/0`, `::/0`) fail safely to `false`.
@@ -121,11 +122,11 @@ npm start        # Starts server directly via tsx server.ts
 
 ### Automated Test Suite Summary
 
-All **22 / 22** tests pass (`npm test` against `createSautiApp()`, `attachLiveVoiceWebSocket`, and Cloud SQL PostgreSQL, with test rows cleaned up on teardown):
+All **24 / 24** tests pass (`npm test` against `createSautiApp()`, `attachLiveVoiceWebSocket`, and Cloud SQL PostgreSQL, with test rows cleaned up on teardown):
 
 | Test File | Tests | Scope Verified |
 | --- | --- | --- |
-| `tests/security-unit.test.ts` | 8 | Explicit Origin allowlist (missing/unlisted/wildcard rejections), non-revoked guardian consent logic, under-13/teen Live safety rules, environment transitions & adult course isolation, transcript retention/opt-out rules, origin-bound single-use/expiring Live tickets, fail-safe `TRUST_PROXY` validation & anti-spoofing IP resolution, sliding-window `429` rate limiting |
+| `tests/security-unit.test.ts` | 10 | Explicit Origin allowlist (missing/unlisted/wildcard rejections), non-revoked guardian consent logic, under-13/teen Live safety rules, environment transitions & adult course isolation, transcript retention/opt-out rules, origin-bound single-use/expiring Live tickets, fail-safe `TRUST_PROXY` validation & anti-spoofing IP resolution, sliding-window `429` rate limiting, Swahili `SAUTI` pronunciation across Live/TTS/browser fallback, env-only AI model config & startup validation |
 | `tests/ownership-idor.test.ts` | 8 | Learner self-access, cross-learner IDOR (`404` uniform), parent access to nullable-`userId` child, cross-parent IDOR, unauthenticated `401` rejections, teacher classroom IDOR, admin safe role responses & self-demotion block, atomic single-use password reset |
 | `tests/websocket-childsafety-consent.test.ts` | 4 | Under-13 individual registration block, explicit guardian consent grant/revoke + `guardian_consent_events` audit rows, Live gating across `little_voices`/`young_explorers`/`teen_voices`, adult mode/course/environment promotion blocks, WS pre-upgrade `401`/`403` checks (missing/untrusted Origin, Origin A->B ticket mismatch), single-use ticket consumption, immediate WS termination on consent revocation, WS per-IP/per-user limits resisting spoofed `X-Forwarded-For` & trusted-proxy routing |
 | `tests/xp-ratelimit-validation.test.ts` | 2 | Premature lesson completion block (`400`), repeat activity/lesson/achievement XP anti-farming, cross-origin CSRF rejection (`403`), TTS/dialogue bounds, transcribe MIME allowlist & 3 MB size enforcement (`400`/`413`), TTS `429` rate limit |
@@ -151,9 +152,10 @@ All **22 / 22** tests pass (`npm test` against `createSautiApp()`, `attachLiveVo
    NODE_ENV=production npm start
    ```
    In production (`NODE_ENV=production`), `server.ts` mounts `createSautiApp()`, serves the static bundle from `dist/` with SPA fallback, and attaches `/ws/live` on port `3000` (or `PORT`).
-7. **Child Safety & Multi-Instance Scaling Note:**
+7. **Zero-Budget Operation, Child Safety & Scaling Notes:**
    - Voice recordings are processed transiently for transcription and never stored permanently as raw audio files.
    - Pronunciation Coach compares speech-to-text transcripts against target text word-by-word without fabricating acoustic phonetic percentages.
-   - When `GEMINI_API_KEY` is absent, TTS falls back transparently to browser `speechSynthesis` and Live Conversations enter clearly labelled Demo Mode.
-   - `liveTicketService` and `rateLimit` store ephemeral state in process memory; multi-instance deployments behind a load balancer should back those stores with Redis or PostgreSQL.
+   - **No-cost features (no AI API required):** Authentication, learner/parent/teacher/admin portals, interactive non-AI lessons, deterministic Pronunciation Coach word comparison, browser `SpeechSynthesis` playback (with Swahili `SAUTI` phonetic pronunciation), and clearly labelled Demo Mode conversations.
+   - **Quota/API-dependent features:** Server Gemini TTS (`GEMINI_TTS_MODEL`, with bounded in-memory caching for short reference phrases), multi-speaker TTS (`GEMINI_MULTI_TTS_MODEL`), audio transcription (`GEMINI_TRANSCRIBE_MODEL`), AI coaching/summaries (`GEMINI_TEXT_MODEL`), and real-time Gemini Live voice (`GEMINI_LIVE_MODEL`). Each capability is gated independently; missing env vars never fall back to hardcoded models.
+   - `liveTicketService`, `ttsCache`, and `rateLimit` store ephemeral state in process memory to avoid external Redis costs; multi-instance deployments behind a load balancer should back ticket/rate-limit stores with PostgreSQL or Redis.
 

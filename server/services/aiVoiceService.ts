@@ -1,5 +1,13 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { env, isGeminiConfigured } from '../config/env.ts';
+import {
+  AiCapability,
+  env,
+  getConfiguredModel,
+  isCapabilityConfigured,
+  isGeminiApiKeySet,
+  isGeminiConfigured,
+  requireConfiguredModel,
+} from '../config/env.ts';
 import { buildAgeSafetyPromptGuard } from './childSafetyService.ts';
 
 export interface WordComparisonItem {
@@ -19,6 +27,7 @@ export interface PronunciationFeedbackResult {
 
 export interface IVoiceProvider {
   isConfigured(): boolean;
+  isCapabilityConfigured(capability: AiCapability): boolean;
   synthesizeSpeech(text: string, voiceName?: string, style?: string): Promise<{ audioBase64: string; mimeType: string }>;
   synthesizeDialogue(lines: { speaker: string; text: string; voiceName?: string; style?: string }[]): Promise<{ audioBase64: string; mimeType: string }>;
   transcribeAudio(audioBase64: string, mimeType: string): Promise<string>;
@@ -29,16 +38,51 @@ export interface IVoiceProvider {
 
 let _aiClient: GoogleGenAI | null = null;
 
+const MAX_TTS_CACHE_ENTRIES = 50;
+const MAX_TTS_CACHE_TEXT_CHARS = 300;
+const TTS_CACHE_TTL_MS = 15 * 60 * 1000;
+const ttsCache = new Map<string, { audioBase64: string; mimeType: string; expiresAt: number }>();
+
+function getCachedTts(key: string): { audioBase64: string; mimeType: string } | null {
+  const entry = ttsCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    ttsCache.delete(key);
+    return null;
+  }
+  // Refresh LRU order
+  ttsCache.delete(key);
+  ttsCache.set(key, entry);
+  return { audioBase64: entry.audioBase64, mimeType: entry.mimeType };
+}
+
+function setCachedTts(key: string, value: { audioBase64: string; mimeType: string }) {
+  if (ttsCache.size >= MAX_TTS_CACHE_ENTRIES) {
+    const oldestKey = ttsCache.keys().next().value;
+    if (oldestKey) ttsCache.delete(oldestKey);
+  }
+  ttsCache.set(key, { ...value, expiresAt: Date.now() + TTS_CACHE_TTL_MS });
+}
+
 export function sanitizeAiErrorMessage(err: unknown, fallbackMessage: string): string {
-  const status = (err as any)?.status || (err as any)?.code;
-  if (status === 429) {
-    return 'Voice service is temporarily busy. Please try again in a moment.';
+  const anyErr = err as { status?: number; code?: number | string; message?: string } | undefined;
+  const status = anyErr?.status ?? anyErr?.code;
+  const msg = typeof anyErr?.message === 'string' ? anyErr.message : '';
+
+  if (status === 429 || status === 'RESOURCE_EXHAUSTED' || /RESOURCE_EXHAUSTED|quota/i.test(msg)) {
+    return 'Free-tier AI quota or rate limit reached. Please pause briefly or continue in local practice mode.';
+  }
+  if (status === 404 || status === 'NOT_FOUND' || /NOT_FOUND/i.test(msg)) {
+    return 'The configured AI model is unavailable or unsupported for this account.';
+  }
+  if (status === 401 || status === 403 || status === 'PERMISSION_DENIED') {
+    return 'AI provider credentials do not have access to this configured model.';
   }
   return fallbackMessage;
 }
 
 export function getGeminiClient(): GoogleGenAI | null {
-  if (!isGeminiConfigured()) return null;
+  if (!isGeminiApiKeySet()) return null;
   if (!_aiClient) {
     _aiClient = new GoogleGenAI({
       apiKey: env.geminiApiKey,
@@ -97,12 +141,32 @@ export function compareTranscriptWords(targetText: string, transcript: string): 
   };
 }
 
+const SAUTI_SWAHILI_STYLE_NOTE =
+  'Pronounce "Sauti" in authentic Swahili (Kiswahili) as three distinct syllables with stress on the middle syllable: "sah-OO-tee" (/sɑˈu.ti/), never "saw-tee", "sow-tee", or spelled letter-by-letter.';
+
+export function prepareTtsPronunciation(text: string, style?: string): { text: string; style: string } {
+  const baseStyle = style || 'Warm, clear, natural English educator';
+  if (!/\bsauti\b/i.test(text)) {
+    return { text, style: baseStyle };
+  }
+  const normalizedText = text.replace(/\bSAUTI\b/g, 'Sauti');
+  const nextStyle = baseStyle.includes('/sɑˈu.ti/')
+    ? baseStyle
+    : `${baseStyle}. ${SAUTI_SWAHILI_STYLE_NOTE}`;
+  return { text: normalizedText, style: nextStyle };
+}
+
 class GeminiVoiceProvider implements IVoiceProvider {
   isConfigured(): boolean {
     return isGeminiConfigured();
   }
 
+  isCapabilityConfigured(capability: AiCapability): boolean {
+    return isCapabilityConfigured(capability);
+  }
+
   async synthesizeSpeech(text: string, voiceName = 'Kore', style = 'Warm, clear, natural English educator') {
+    const ttsModel = requireConfiguredModel('tts');
     const ai = getGeminiClient();
     if (!ai) {
       throw new Error('Gemini API key is not configured for server-side TTS.');
@@ -110,17 +174,23 @@ class GeminiVoiceProvider implements IVoiceProvider {
 
     const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
     const selectedVoice = validVoices.includes(voiceName) ? voiceName : 'Kore';
+    const prepared = prepareTtsPronunciation(text, style);
+    const cacheKey = `${ttsModel}::${selectedVoice}::${prepared.text}::${prepared.style}`;
+    if (prepared.text.length <= MAX_TTS_CACHE_TEXT_CHARS) {
+      const cached = getCachedTts(cacheKey);
+      if (cached) return cached;
+    }
 
     const response = await ai.models.generateContent({
-      model: env.models.tts,
+      model: ttsModel,
       contents: [
         {
           role: 'user',
           parts: [
             {
-              text,
+              text: prepared.text,
               speechMetadata: {
-                style,
+                style: prepared.style,
               },
             } as any,
           ],
@@ -141,32 +211,41 @@ class GeminiVoiceProvider implements IVoiceProvider {
       throw new Error('Speech synthesis did not return audio data.');
     }
 
-    return {
+    const result = {
       audioBase64: base64Audio,
       mimeType: 'audio/wav',
     };
+    if (prepared.text.length <= MAX_TTS_CACHE_TEXT_CHARS) {
+      setCachedTts(cacheKey, result);
+    }
+    return result;
   }
 
   async synthesizeDialogue(lines: { speaker: string; text: string; voiceName?: string; style?: string }[]) {
-    const ai = getGeminiClient();
-    if (!ai) {
-      throw new Error('Gemini API key is not configured for multi-speaker TTS.');
-    }
     const speakers = Array.from(new Set(lines.map((l) => l.speaker))).slice(0, 2);
     if (speakers.length < 2) {
       return this.synthesizeSpeech(lines.map((l) => l.text).join(' '), lines[0]?.voiceName || 'Kore');
     }
 
-    const parts = lines.map((line) => ({
-      text: `${line.speaker}: ${line.text}`,
-      speechMetadata: {
-        speaker: line.speaker,
-        style: line.style || 'Natural conversational English',
-      },
-    }));
+    const multiTtsModel = requireConfiguredModel('multiTts');
+    const ai = getGeminiClient();
+    if (!ai) {
+      throw new Error('Gemini API key is not configured for multi-speaker TTS.');
+    }
+
+    const parts = lines.map((line) => {
+      const prepared = prepareTtsPronunciation(line.text, line.style || 'Natural conversational English');
+      return {
+        text: `${line.speaker}: ${prepared.text}`,
+        speechMetadata: {
+          speaker: line.speaker,
+          style: prepared.style,
+        },
+      };
+    });
 
     const response = await ai.models.generateContent({
-      model: env.models.multiTts,
+      model: multiTtsModel,
       contents: [{ role: 'user', parts: parts as any }],
       config: {
         responseModalities: ['AUDIO'],
@@ -195,13 +274,14 @@ class GeminiVoiceProvider implements IVoiceProvider {
   }
 
   async transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
+    const transcribeModel = requireConfiguredModel('transcribe');
     const ai = getGeminiClient();
     if (!ai) {
       throw new Error('Gemini API key is not configured for speech transcription.');
     }
 
     const response = await ai.models.generateContent({
-      model: env.models.transcribe,
+      model: transcribeModel,
       contents: {
         parts: [
           {
@@ -229,7 +309,8 @@ class GeminiVoiceProvider implements IVoiceProvider {
       'Word comparison is based on speech-to-text transcription rather than acoustic phoneme measurement. Use the reference audio to compare rhythm and vowel clarity.';
 
     const ai = getGeminiClient();
-    if (!ai) {
+    const textModel = getConfiguredModel('text');
+    if (!ai || !textModel) {
       const missingOrSub = comparison.filter((c) => c.status !== 'matched').map((c) => c.word);
       const guidance =
         missingOrSub.length === 0
@@ -251,7 +332,7 @@ class GeminiVoiceProvider implements IVoiceProvider {
     const safetyGuard = buildAgeSafetyPromptGuard(environment);
     try {
       const response = await ai.models.generateContent({
-        model: env.models.text,
+        model: textModel,
         contents: `Target phrase: "${targetText}"
 Transcribed speech: "${transcript}"
 Words differing in transcript: ${missed.length ? missed.join(', ') : 'None'}
@@ -295,7 +376,8 @@ Provide 2-3 encouraging, practical sentences of English pronunciation and phrasi
     cefrLevel: string
   ): Promise<{ feedback: string; suggestions: string[] }> {
     const ai = getGeminiClient();
-    if (!ai) {
+    const textModel = getConfiguredModel('text');
+    if (!ai || !textModel) {
       return {
         feedback: 'Thank you for sharing your response! Keep practising complete sentences at your own pace.',
         suggestions: ['Read your response aloud in Voice Studio to build speaking fluency.'],
@@ -305,7 +387,7 @@ Provide 2-3 encouraging, practical sentences of English pronunciation and phrasi
     const safetyGuard = buildAgeSafetyPromptGuard(environment);
     try {
       const response = await ai.models.generateContent({
-        model: env.models.text,
+        model: textModel,
         contents: `Activity prompt: "${prompt}"
 Learner response: "${learnerResponse}"
 Environment: ${environment}, CEFR level: ${cefrLevel}.`,
@@ -339,7 +421,8 @@ Environment: ${environment}, CEFR level: ${cefrLevel}.`,
     cefrLevel: string
   ): Promise<{ summary: string; vocabularyNotes: { term: string; explanation: string }[] }> {
     const ai = getGeminiClient();
-    if (!ai || transcript.length === 0) {
+    const textModel = getConfiguredModel('text');
+    if (!ai || !textModel || transcript.length === 0) {
       return {
         summary: `Completed a ${mode} speaking session (${cefrLevel}). Keep practising short daily conversations.`,
         vocabularyNotes: [
@@ -356,7 +439,7 @@ Environment: ${environment}, CEFR level: ${cefrLevel}.`,
 
     try {
       const response = await ai.models.generateContent({
-        model: env.models.text,
+        model: textModel,
         contents: `Mode: ${mode}, Environment: ${environment}, CEFR: ${cefrLevel}\n\nTranscript:\n${formatted}`,
         config: {
           systemInstruction: `Summarize this English learning conversation warmly, highlighting strengths, 1 gentle suggestion, and up to 3 useful vocabulary notes. Do not include personal identifying information in the summary. ${safetyGuard}`,

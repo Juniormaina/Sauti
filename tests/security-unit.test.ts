@@ -2,7 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
-import { isAuthenticatedNonBrowserClient, isPermittedOrigin } from '../server/config/env.ts';
+import {
+  assertAiConfigurationOnStartup,
+  env,
+  getAiCapabilitiesStatus,
+  getConfiguredModel,
+  isAuthenticatedNonBrowserClient,
+  isCapabilityConfigured,
+  isPermittedOrigin,
+  requireConfiguredModel,
+  validateAiConfiguration,
+} from '../server/config/env.ts';
 import { parseTrustProxyConfig, resolveClientIp } from '../server/config/trustProxy.ts';
 import {
   canLearnerAccessCourseEnvironment,
@@ -19,6 +29,9 @@ import {
   issueLiveTicket,
 } from '../server/services/liveTicketService.ts';
 import { createRateLimiter } from '../server/middleware/rateLimit.ts';
+import { prepareTtsPronunciation, sanitizeAiErrorMessage } from '../server/services/aiVoiceService.ts';
+import { buildLiveSystemInstruction } from '../server/ws/liveVoiceServer.ts';
+import { formatTextForBrowserSpeech } from '../src/utils/speechPronunciation.ts';
 
 test('Origin allowlist enforces explicit trusted origins and rejects missing/unlisted/wildcard origins', () => {
   const allowlist = ['http://localhost:3000', 'https://ais-dev-example.run.app'];
@@ -364,4 +377,119 @@ test('Sliding-window rate limiter enforces maxRequests and sets 429 Retry-After'
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('SAUTI companion enforces Swahili pronunciation (sah-OO-tee /sɑˈu.ti/) across Live, Gemini TTS, and browser fallback', () => {
+  const livePrompt = buildLiveSystemInstruction(
+    'Everyday conversations',
+    'young_adults',
+    '18-25',
+    'B1'
+  );
+  assert.match(livePrompt, /Swahili|Kiswahili/i);
+  assert.match(livePrompt, /sah-OO-tee/);
+  assert.match(livePrompt, /\/sɑˈu\.ti\//);
+
+  const ttsPrepared = prepareTtsPronunciation(
+    "Jambo! I am SAUTI. Welcome to SAUTI's studio.",
+    'Warm educator'
+  );
+  assert.equal(ttsPrepared.text, "Jambo! I am Sauti. Welcome to Sauti's studio.");
+  assert.match(ttsPrepared.style, /sah-OO-tee/);
+  assert.match(ttsPrepared.style, /\/sɑˈu\.ti\//);
+
+  const unrelatedTts = prepareTtsPronunciation('Good morning, welcome to class.', 'Warm educator');
+  assert.equal(unrelatedTts.text, 'Good morning, welcome to class.');
+  assert.equal(unrelatedTts.style, 'Warm educator');
+
+  assert.equal(
+    formatTextForBrowserSpeech("Jambo! I am SAUTI, welcome to Sauti's studio."),
+    "Jambo! I am sah-oo-tee, welcome to sah-oo-tee's studio."
+  );
+});
+
+test('AI model configuration avoids hardcoded fallbacks, keeps capabilities independent, and validates startup configuration', () => {
+  // Without GEMINI_*_MODEL env vars set, env.models must not silently fall back to hardcoded models
+  if (!process.env.GEMINI_TEXT_MODEL) assert.equal(env.models.text, null);
+  if (!process.env.GEMINI_TTS_MODEL) assert.equal(env.models.tts, null);
+  if (!process.env.GEMINI_MULTI_TTS_MODEL) assert.equal(env.models.multiTts, null);
+  if (!process.env.GEMINI_TRANSCRIBE_MODEL) assert.equal(env.models.transcribe, null);
+  if (!process.env.GEMINI_LIVE_MODEL) assert.equal(env.models.live, null);
+
+  // Missing model must throw explicitly rather than falling back to a hardcoded identifier
+  assert.throws(
+    () =>
+      requireConfiguredModel('tts', {
+        geminiApiKey: 'test-key-with-sufficient-length',
+        models: { text: 'custom-text-model', tts: null },
+      }),
+    /GEMINI_TTS_MODEL/
+  );
+
+  // Capabilities remain completely independent
+  const partialModels = {
+    text: 'custom-text-model',
+    tts: null,
+    multiTts: null,
+    transcribe: null,
+    live: 'custom-live-model',
+  };
+  const caps = getAiCapabilitiesStatus({
+    geminiApiKey: 'test-key-with-sufficient-length',
+    models: partialModels,
+  });
+  assert.deepEqual(caps, {
+    text: true,
+    tts: false,
+    multiTts: false,
+    transcribe: false,
+    live: true,
+  });
+  assert.equal(
+    isCapabilityConfigured('text', { geminiApiKey: 'test-key-with-sufficient-length', models: partialModels }),
+    true
+  );
+  assert.equal(
+    isCapabilityConfigured('tts', { geminiApiKey: 'test-key-with-sufficient-length', models: partialModels }),
+    false
+  );
+  assert.equal(getConfiguredModel('live', partialModels), 'custom-live-model');
+
+  // Startup validation modes
+  const disabledRes = validateAiConfiguration({ geminiApiKey: '', models: {}, strict: false });
+  assert.equal(disabledRes.ok, true);
+  assert.equal(disabledRes.mode, 'disabled');
+
+  const partialRes = validateAiConfiguration({
+    geminiApiKey: 'test-key-with-sufficient-length',
+    models: partialModels,
+    strict: false,
+  });
+  assert.equal(partialRes.ok, true);
+  assert.equal(partialRes.mode, 'partial');
+  assert.deepEqual(partialRes.missingCapabilities, ['tts', 'multiTts', 'transcribe']);
+
+  // Invalid whitespace model identifier fails validation even in non-strict mode
+  const invalidModelRes = validateAiConfiguration({
+    geminiApiKey: 'test-key-with-sufficient-length',
+    models: { text: 'invalid model name' },
+    strict: false,
+  });
+  assert.equal(invalidModelRes.ok, false);
+  assert.deepEqual(invalidModelRes.invalidModelEnvVars, ['GEMINI_TEXT_MODEL']);
+
+  // Strict startup validation fails cleanly when required model env vars are missing
+  assert.throws(
+    () =>
+      assertAiConfigurationOnStartup({
+        geminiApiKey: 'test-key-with-sufficient-length',
+        models: partialModels,
+        strict: true,
+      }),
+    /GEMINI_TTS_MODEL/
+  );
+
+  // Quota and model-availability error sanitization
+  assert.match(sanitizeAiErrorMessage({ status: 429 }, 'fallback'), /quota|rate limit/i);
+  assert.match(sanitizeAiErrorMessage({ status: 404 }, 'fallback'), /unavailable|unsupported/i);
 });

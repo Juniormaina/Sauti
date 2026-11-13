@@ -4,9 +4,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { LiveServerMessage, Modality } from '@google/genai';
 import { eq } from 'drizzle-orm';
 import {
+  AI_MODEL_ENV_KEYS,
   env,
+  getConfiguredModel,
   isAuthenticatedNonBrowserClient,
-  isGeminiConfigured,
+  isCapabilityConfigured,
   isPermittedOrigin,
   normalizeOriginHeader,
 } from '../config/env.ts';
@@ -63,7 +65,7 @@ function rejectUpgrade(socket: Duplex, statusCode: number, reason: string) {
   socket.destroy();
 }
 
-function buildLiveSystemInstruction(
+export function buildLiveSystemInstruction(
   mode: string,
   environment: string,
   ageRange: string,
@@ -71,6 +73,7 @@ function buildLiveSystemInstruction(
 ): string {
   const safetyGuard = buildAgeSafetyPromptGuard(environment, ageRange);
   return `You are SAUTI, a warm, patient, voice-first English learning companion.
+Name pronunciation: "SAUTI" is the Swahili (Kiswahili) word meaning "voice". Whenever you say your name "SAUTI", always pronounce it in authentic Kiswahili with three distinct syllables and stress on the second syllable: "sah-OO-tee" (/sɑˈu.ti/, sa-u-ti). Never pronounce it as "saw-tee", "sow-tee", or spell out the letters S-A-U-T-I.
 Conversation mode: ${mode}.
 Learner environment: ${environment}.
 CEFR proficiency level: ${cefrLevel}.
@@ -304,7 +307,7 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
       if (options?.createUpstreamSession) {
         try {
           session = await options.createUpstreamSession();
-          sendJson({ type: 'ready', model: env.models.live });
+          sendJson({ type: 'ready', model: getConfiguredModel('live') || 'test-upstream-session' });
         } catch {
           sendJson({ type: 'error', message: 'Unable to open Live voice upstream session.' });
           cleanup();
@@ -313,11 +316,12 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
         }
       } else {
         const ai = getGeminiClient();
-        if (!ai || !isGeminiConfigured()) {
+        const liveModel = getConfiguredModel('live');
+        if (!ai || !isCapabilityConfigured('live') || !liveModel) {
           sendJson({
             type: 'demo_mode',
             message:
-              'Gemini API key is not configured on the server. Switching to clearly labelled local Demo Mode.',
+              `Live AI voice is not configured on this server (requires GEMINI_API_KEY and ${AI_MODEL_ENV_KEYS.live}). Switching to clearly labelled local Demo Mode.`,
           });
           cleanup();
           clientWs.close(1000, 'Demo mode');
@@ -329,7 +333,7 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
         const selectedVoice = validVoices.includes(ticket.voiceName) ? ticket.voiceName : 'Zephyr';
 
         session = await ai.live.connect({
-          model: env.models.live,
+          model: liveModel,
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
@@ -346,7 +350,7 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
           },
           callbacks: {
             onopen: () => {
-              sendJson({ type: 'ready', model: env.models.live });
+              sendJson({ type: 'ready', model: liveModel });
             },
             onmessage: (message: LiveServerMessage) => {
               if (clientWs.readyState !== WebSocket.OPEN) return;

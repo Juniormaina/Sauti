@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { apiFetch } from '../services/api';
+import { formatTextForBrowserSpeech } from '../utils/speechPronunciation';
 
+export { formatTextForBrowserSpeech };
 export type SpeechEngineMode = 'idle' | 'gemini' | 'browser_fallback';
 
 export function useSpeechPlayback() {
@@ -60,7 +62,7 @@ export function useSpeechPlayback() {
         // Transparent fallback to browser speechSynthesis
         setIsLoading(false);
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(text);
+          const utterance = new SpeechSynthesisUtterance(formatTextForBrowserSpeech(text));
           utterance.lang = 'en-GB';
           utterance.rate = speed;
           setEngineUsed('browser_fallback');

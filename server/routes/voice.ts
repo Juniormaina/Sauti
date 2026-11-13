@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { db } from '../../src/db/index.ts';
 import { conversationSessions, voicePracticeSessions } from '../../src/db/schema.ts';
 import {
+  AI_MODEL_ENV_KEYS,
   env,
+  getAiCapabilitiesStatus,
   isAuthenticatedNonBrowserClient,
-  isGeminiConfigured,
   isPermittedOrigin,
   normalizeOriginHeader,
 } from '../config/env.ts';
@@ -138,15 +139,19 @@ const liveTicketSchema = z.object({
 });
 
 router.get('/status', (_req, res) => {
+  const capabilities = getAiCapabilitiesStatus();
+  const anyConfigured = Object.values(capabilities).some(Boolean);
   res.json({
-    geminiConfigured: isGeminiConfigured(),
+    geminiConfigured: anyConfigured,
+    capabilities,
     models: {
       text: env.models.text,
       tts: env.models.tts,
+      multiTts: env.models.multiTts,
       transcribe: env.models.transcribe,
       live: env.models.live,
     },
-    provider: isGeminiConfigured() ? 'Gemini Voice Provider' : 'Browser Fallback / Demo Mode',
+    provider: anyConfigured ? 'Gemini Voice Provider' : 'Browser Fallback / Demo Mode',
   });
 });
 
@@ -156,9 +161,9 @@ router.post('/tts', optionalAuth, ttsRateLimiter, async (req: AuthRequest, res) 
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid TTS request.' });
     }
-    if (!voiceProvider.isConfigured()) {
+    if (!voiceProvider.isCapabilityConfigured('tts')) {
       return res.status(503).json({
-        error: 'Gemini TTS is not configured on this server. Use browser SpeechSynthesis fallback.',
+        error: `Gemini TTS is not configured on this server (requires GEMINI_API_KEY and ${AI_MODEL_ENV_KEYS.tts}). Use browser SpeechSynthesis fallback.`,
         fallbackSuggested: true,
       });
     }
@@ -184,13 +189,15 @@ router.post('/tts-dialogue', optionalAuth, ttsRateLimiter, async (req: AuthReque
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dialogue lines are required.' });
     }
-    if (!voiceProvider.isConfigured()) {
+    const maxLines = req.authUser ? parsed.data.lines : parsed.data.lines.slice(0, 6);
+    const speakers = new Set(maxLines.map((l) => l.speaker));
+    const requiredCapability = speakers.size >= 2 ? 'multiTts' : 'tts';
+    if (!voiceProvider.isCapabilityConfigured(requiredCapability)) {
       return res.status(503).json({
-        error: 'Gemini TTS is not configured on this server.',
+        error: `Gemini dialogue TTS is not configured on this server (requires GEMINI_API_KEY and ${AI_MODEL_ENV_KEYS[requiredCapability]}).`,
         fallbackSuggested: true,
       });
     }
-    const maxLines = req.authUser ? parsed.data.lines : parsed.data.lines.slice(0, 6);
     const audio = await voiceProvider.synthesizeDialogue(maxLines);
     return res.json(audio);
   } catch (err: unknown) {
@@ -224,9 +231,9 @@ router.post('/transcribe', requireAuth, transcribeRateLimiter, async (req: AuthR
       return res.status(413).json({ error: 'Audio recording exceeds the maximum allowed size (3 MB).' });
     }
 
-    if (!voiceProvider.isConfigured()) {
+    if (!voiceProvider.isCapabilityConfigured('transcribe')) {
       return res.status(503).json({
-        error: 'Gemini transcription is unavailable because GEMINI_API_KEY is not configured.',
+        error: `Gemini transcription is unavailable because GEMINI_API_KEY or ${AI_MODEL_ENV_KEYS.transcribe} is not configured.`,
         transcriptionAvailable: false,
       });
     }

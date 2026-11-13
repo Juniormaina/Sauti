@@ -2,11 +2,12 @@ import http from 'node:http';
 import path from 'node:path';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { env } from './server/config/env.ts';
+import { assertAiConfigurationOnStartup, env } from './server/config/env.ts';
 import { createSautiApp } from './server/app.ts';
 import { attachLiveVoiceWebSocket } from './server/ws/liveVoiceServer.ts';
 
 async function startServer() {
+  assertAiConfigurationOnStartup();
   const app = createSautiApp();
   const server = http.createServer(app);
 

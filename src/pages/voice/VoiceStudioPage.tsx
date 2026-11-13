@@ -233,7 +233,7 @@ export function VoiceStudioPage() {
         setCoachLoading(false);
         setCoachResult({
           error:
-            'Automatic server transcription is unconfigured without GEMINI_API_KEY. Replay your recording and type what you said below to run word comparison.',
+            'Automatic server transcription is unconfigured (requires GEMINI_API_KEY and GEMINI_TRANSCRIBE_MODEL). Replay your recording and type what you said below to run word comparison.',
         });
         return;
       }
@@ -414,13 +414,35 @@ export function VoiceStudioPage() {
     }
 
     // Clearly labelled local Demo Mode response
-    const demoReply = `Demo Mode (${convMode}): Thank you for sharing "${text}". Try expanding with one detail about where or when this happens.`;
+    const asksAboutName = /\b(your name|who are you|say your name|pronounce|sauti)\b/i.test(text);
+    const demoReply = asksAboutName
+      ? `Demo Mode (${convMode}): Jambo! My name is SAUTI, pronounced "sah-OO-tee" in Swahili, which means "voice". How would you like to practise speaking today?`
+      : `Demo Mode (${convMode}): I am SAUTI. Thank you for sharing "${text}". Try expanding with one detail about where or when this happens.`;
     setTranscriptList((prev) => [
       ...prev,
       { role: 'user', text, timestamp: new Date().toLocaleTimeString() },
       { role: 'assistant', text: demoReply, timestamp: new Date().toLocaleTimeString() },
     ]);
     speech.speak(demoReply, { voiceName, speed: playbackSpeed });
+  };
+
+  const handleHearSautiName = () => {
+    if (liveState === 'connected' && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          text: 'Please greet me warmly and pronounce your name SAUTI clearly in authentic Swahili (sah-OO-tee).',
+        })
+      );
+      return;
+    }
+    speech.speak(
+      'Jambo! I am SAUTI, your voice-first English companion. In Swahili, SAUTI means voice.',
+      {
+        voiceName,
+        speed: playbackSpeed,
+        style: 'Warm, welcoming companion tone',
+      }
+    );
   };
 
   const handleFinishAndSummarize = async () => {
@@ -861,26 +883,42 @@ export function VoiceStudioPage() {
       {activeTab === 'live' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-4 rounded-3xl bg-white border border-[#245C45]/12 p-6 space-y-5">
-            <div className="flex items-center gap-4">
-              <ResilientImage
-                src={SAUTI_IMAGES.voiceCompanion}
-                alt="SAUTI AI Voice Companion"
-                className="w-16 h-16 rounded-2xl object-cover shrink-0"
-              />
-              <div>
-                <h2 className="font-display text-lg font-bold">SAUTI Companion</h2>
-                <p className="text-xs text-[#4A5851]">
-                  {liveState === 'connected'
-                    ? 'Live Gemini Audio Active'
-                    : liveState === 'connecting'
-                    ? 'Connecting...'
-                    : liveState === 'demo_mode'
-                    ? 'Demo Mode (Local Speech)'
-                    : liveState === 'restricted'
-                    ? 'Child Safety Restriction'
-                    : 'Ready to converse'}
-                </p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <ResilientImage
+                  src={SAUTI_IMAGES.voiceCompanion}
+                  alt="SAUTI AI Voice Companion"
+                  className="w-16 h-16 rounded-2xl object-cover shrink-0"
+                />
+                <div>
+                  <h2 className="font-display text-lg font-bold">SAUTI Companion</h2>
+                  <p className="text-xs text-[#245C45] font-medium">
+                    Pronounced sa·u·ti (/sɑˈu.ti/) · Swahili for &ldquo;voice&rdquo;
+                  </p>
+                  <p className="text-xs text-[#4A5851]">
+                    {liveState === 'connected'
+                      ? 'Live Gemini Audio Active'
+                      : liveState === 'connecting'
+                      ? 'Connecting...'
+                      : liveState === 'demo_mode'
+                      ? 'Demo Mode (Local Speech)'
+                      : liveState === 'restricted'
+                      ? 'Child Safety Restriction'
+                      : 'Ready to converse'}
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                disabled={speech.isLoading}
+                onClick={handleHearSautiName}
+                className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-[#245C45]/20 text-xs font-semibold text-[#245C45] hover:bg-[#FDF3E3] transition-colors"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span>
+                  {speech.isLoading ? 'Preparing audio...' : 'Hear SAUTI say its name (sah-OO-tee)'}
+                </span>
+              </button>
             </div>
 
             <div>
