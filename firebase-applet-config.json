@@ -3,6 +3,7 @@
   "appId": "1:345048568587:web:38e5252b5c2baf4031480e",
   "apiKey": "AIzaSyDfKBPKhZROmG-zcRammPR5JihSr_1jGrs",
   "authDomain": "fine-scheduler-3t3g1.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-sautivoicefirste-a428a7fd-2046-4d82-b07f-5413a577ad95",
   "storageBucket": "fine-scheduler-3t3g1.firebasestorage.app",
   "messagingSenderId": "345048568587",
   "measurementId": "",

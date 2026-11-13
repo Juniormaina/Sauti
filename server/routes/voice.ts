@@ -1,18 +1,135 @@
 import { Router } from 'express';
 import { and, desc, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../src/db/index.ts';
+import { conversationSessions, voicePracticeSessions } from '../../src/db/schema.ts';
+import { env, isGeminiConfigured, isPermittedOrigin } from '../config/env.ts';
+import { AuthRequest, optionalAuth, requireAuth } from '../middleware/auth.ts';
+import { createRateLimiter, getClientIp } from '../middleware/rateLimit.ts';
+import { sanitizeAiErrorMessage, voiceProvider } from '../services/aiVoiceService.ts';
+import { parsePositiveInt, resolveAuthorizedLearner } from '../services/authorizationService.ts';
 import {
-  achievements,
-  conversationSessions,
-  learnerAchievements,
-  learnerProfiles,
-  voicePracticeSessions,
-} from '../../src/db/schema.ts';
-import { env, isGeminiConfigured } from '../config/env.ts';
-import { AuthRequest, requireAuth } from '../middleware/auth.ts';
-import { voiceProvider } from '../services/aiVoiceService.ts';
+  ALL_LIVE_MODES,
+  evaluateLiveVoiceSafety,
+  shouldStoreTranscripts,
+} from '../services/childSafetyService.ts';
+import { issueLiveTicket } from '../services/liveTicketService.ts';
+import { awardSingleAchievement, awardXpAtomically } from '../services/progressService.ts';
 
 const router = Router();
+
+const VALID_VOICES = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'] as const;
+const ALLOWED_AUDIO_MIME_TYPES = new Set([
+  'audio/webm',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/mp3',
+  'audio/mpeg',
+  'audio/ogg',
+  'audio/mp4',
+  'audio/aac',
+  'audio/flac',
+]);
+const MAX_TRANSCRIBE_BYTES = 3 * 1024 * 1024; // 3MB decoded audio cap
+
+const ttsRateLimiter = createRateLimiter({
+  name: 'voice-tts',
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 35,
+  keyGenerator: (req) => {
+    const authUser = (req as AuthRequest).authUser;
+    return authUser ? `user:${authUser.id}` : `ip:${getClientIp(req)}`;
+  },
+  message: 'Too many speech synthesis requests. Please pause briefly and try again.',
+});
+
+const transcribeRateLimiter = createRateLimiter({
+  name: 'voice-transcribe',
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 20,
+  keyGenerator: (req) => `user:${(req as AuthRequest).authUser?.id ?? getClientIp(req)}`,
+  message: 'Too many transcription requests. Please wait a few minutes.',
+});
+
+const aiVoiceCoachRateLimiter = createRateLimiter({
+  name: 'voice-ai-coach',
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 30,
+  keyGenerator: (req) => `user:${(req as AuthRequest).authUser?.id ?? getClientIp(req)}`,
+  message: 'Too many voice coaching requests. Please wait a moment.',
+});
+
+const liveTicketRateLimiter = createRateLimiter({
+  name: 'voice-live-ticket',
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 15,
+  keyGenerator: (req) => `user:${(req as AuthRequest).authUser?.id ?? getClientIp(req)}`,
+  message: 'Too many Live Voice connection attempts. Please wait a moment.',
+});
+
+const ttsSchema = z.object({
+  text: z.string().trim().min(1, 'Text is required for speech synthesis.').max(1200),
+  voiceName: z.enum(VALID_VOICES).optional(),
+  style: z.string().trim().max(120).optional(),
+});
+
+const ttsDialogueSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        speaker: z.string().trim().min(1).max(40),
+        text: z.string().trim().min(1).max(300),
+        voiceName: z.enum(VALID_VOICES).optional(),
+        style: z.string().trim().max(120).optional(),
+      })
+    )
+    .min(1, 'Dialogue lines are required.')
+    .max(8, 'Dialogue is limited to 8 lines per request.'),
+});
+
+const transcribeSchema = z.object({
+  audioBase64: z.string().min(16, 'Recorded audio payload is required.').max(4_500_000),
+  mimeType: z.string().trim().max(100).optional(),
+});
+
+const pronunciationSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  targetText: z.string().trim().min(1).max(500),
+  transcript: z.string().trim().min(1).max(1000),
+  durationSeconds: z.number().finite().min(0).max(600).optional(),
+});
+
+const speakLogSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  mode: z.enum(['listen', 'speak', 'pronunciation']).optional(),
+  targetText: z.string().trim().max(500).optional().nullable(),
+  transcript: z.string().trim().max(2000).optional(),
+  feedback: z.string().trim().max(500).optional(),
+  durationSeconds: z.number().finite().min(0).max(600).optional(),
+});
+
+const conversationSummarySchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  mode: z.string().trim().min(1).max(80).optional(),
+  isDemoMode: z.boolean().optional(),
+  transcript: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        text: z.string().max(1500),
+        timestamp: z.string().max(64).optional(),
+      })
+    )
+    .max(120)
+    .optional(),
+  durationSeconds: z.number().finite().min(0).max(3600).optional(),
+});
+
+const liveTicketSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  mode: z.enum(ALL_LIVE_MODES).default('Everyday conversations'),
+  voiceName: z.enum(VALID_VOICES).default('Zephyr'),
+});
 
 router.get('/status', (_req, res) => {
   res.json({
@@ -27,11 +144,11 @@ router.get('/status', (_req, res) => {
   });
 });
 
-router.post('/tts', async (req, res) => {
+router.post('/tts', optionalAuth, ttsRateLimiter, async (req: AuthRequest, res) => {
   try {
-    const { text, voiceName, style } = req.body || {};
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Text is required for speech synthesis.' });
+    const parsed = ttsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid TTS request.' });
     }
     if (!voiceProvider.isConfigured()) {
       return res.status(503).json({
@@ -39,22 +156,27 @@ router.post('/tts', async (req, res) => {
         fallbackSuggested: true,
       });
     }
-    const audio = await voiceProvider.synthesizeSpeech(text.slice(0, 1200), voiceName, style);
+    const maxChars = req.authUser ? 1200 : 600;
+    const audio = await voiceProvider.synthesizeSpeech(
+      parsed.data.text.slice(0, maxChars),
+      parsed.data.voiceName,
+      parsed.data.style
+    );
     return res.json(audio);
-  } catch (err: any) {
-    console.error('TTS error:', err);
+  } catch (err: unknown) {
+    console.error('TTS error:', (err as any)?.status || 'provider_error');
     return res.status(502).json({
-      error: err?.message || 'Speech synthesis failed.',
+      error: sanitizeAiErrorMessage(err, 'Speech synthesis failed. Use browser SpeechSynthesis fallback.'),
       fallbackSuggested: true,
     });
   }
 });
 
-router.post('/tts-dialogue', async (req, res) => {
+router.post('/tts-dialogue', optionalAuth, ttsRateLimiter, async (req: AuthRequest, res) => {
   try {
-    const { lines } = req.body || {};
-    if (!Array.isArray(lines) || lines.length === 0) {
-      return res.status(400).json({ error: 'Dialogue lines are required.' });
+    const parsed = ttsDialogueSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dialogue lines are required.' });
     }
     if (!voiceProvider.isConfigured()) {
       return res.status(503).json({
@@ -62,227 +184,308 @@ router.post('/tts-dialogue', async (req, res) => {
         fallbackSuggested: true,
       });
     }
-    const audio = await voiceProvider.synthesizeDialogue(lines);
+    const maxLines = req.authUser ? parsed.data.lines : parsed.data.lines.slice(0, 6);
+    const audio = await voiceProvider.synthesizeDialogue(maxLines);
     return res.json(audio);
-  } catch (err: any) {
-    console.error('Multi-speaker TTS error:', err);
-    return res.status(502).json({ error: err?.message || 'Dialogue synthesis failed.', fallbackSuggested: true });
+  } catch (err: unknown) {
+    console.error('Multi-speaker TTS error:', (err as any)?.status || 'provider_error');
+    return res.status(502).json({
+      error: sanitizeAiErrorMessage(err, 'Dialogue synthesis failed.'),
+      fallbackSuggested: true,
+    });
   }
 });
 
-router.post('/transcribe', requireAuth, async (req: AuthRequest, res) => {
+router.post('/transcribe', requireAuth, transcribeRateLimiter, async (req: AuthRequest, res) => {
   try {
-    const { audioBase64, mimeType } = req.body || {};
-    if (!audioBase64 || typeof audioBase64 !== 'string') {
-      return res.status(400).json({ error: 'Recorded audio payload is required.' });
+    const parsed = transcribeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Recorded audio payload is required.' });
     }
+
+    const baseMime = (parsed.data.mimeType || 'audio/webm').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_AUDIO_MIME_TYPES.has(baseMime)) {
+      return res.status(400).json({ error: 'Unsupported audio MIME type for transcription.' });
+    }
+
+    const compactB64 = parsed.data.audioBase64.replace(/\s+/g, '');
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compactB64)) {
+      return res.status(400).json({ error: 'Invalid base64 audio payload.' });
+    }
+
+    const decodedBytes = Buffer.from(compactB64, 'base64').byteLength;
+    if (decodedBytes === 0 || decodedBytes > MAX_TRANSCRIBE_BYTES) {
+      return res.status(413).json({ error: 'Audio recording exceeds the maximum allowed size (3 MB).' });
+    }
+
     if (!voiceProvider.isConfigured()) {
       return res.status(503).json({
         error: 'Gemini transcription is unavailable because GEMINI_API_KEY is not configured.',
         transcriptionAvailable: false,
       });
     }
-    const transcript = await voiceProvider.transcribeAudio(audioBase64, mimeType || 'audio/webm');
+
+    const transcript = await voiceProvider.transcribeAudio(compactB64, baseMime);
     return res.json({ transcript, transcriptionAvailable: true });
-  } catch (err: any) {
-    console.error('Transcription error:', err);
-    return res.status(502).json({ error: err?.message || 'Unable to transcribe audio.' });
+  } catch (err: unknown) {
+    console.error('Transcription error:', (err as any)?.status || 'provider_error');
+    return res.status(502).json({ error: sanitizeAiErrorMessage(err, 'Unable to transcribe audio.') });
   }
 });
 
-router.post('/pronunciation', requireAuth, async (req: AuthRequest, res) => {
+router.post('/live-ticket', requireAuth, liveTicketRateLimiter, async (req: AuthRequest, res) => {
   try {
-    const { targetText, transcript, durationSeconds } = req.body || {};
-    if (!targetText || !transcript) {
-      return res.status(400).json({ error: 'Both target text and spoken transcript are required.' });
+    if (!isPermittedOrigin(req.headers.origin, req.headers.host, { allowMissingOrigin: true })) {
+      return res.status(403).json({ error: 'Disallowed request origin for Live Voice ticket.' });
     }
 
-    const [learner] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.userId, req.authUser!.id))
-      .limit(1);
+    const parsed = liveTicketSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid Live Voice request.' });
+    }
+
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId);
+    if (!access.ok) {
+      return res.status(access.status).json({ error: access.error });
+    }
+    const { learner, parent } = access;
+
+    const safetyCheck = evaluateLiveVoiceSafety(learner, parent, parsed.data.mode);
+    if (!safetyCheck.allowed) {
+      return res.status(403).json({
+        error: safetyCheck.reason,
+        code: safetyCheck.code,
+      });
+    }
+
+    const requestOrigin =
+      typeof req.headers.origin === 'string' && req.headers.origin.length > 0
+        ? req.headers.origin
+        : null;
+
+    const issued = issueLiveTicket({
+      userId: req.authUser!.id,
+      learnerId: learner.id,
+      parentId: learner.parentId,
+      environment: learner.environment,
+      ageRange: learner.ageRange,
+      cefrLevel: learner.cefrLevel,
+      mode: parsed.data.mode,
+      voiceName: parsed.data.voiceName,
+      origin: requestOrigin,
+    });
+
+    return res.status(201).json({
+      ticket: issued.ticket,
+      expiresAt: issued.expiresAt,
+      learnerId: learner.id,
+      environment: learner.environment,
+      cefrLevel: learner.cefrLevel,
+      mode: parsed.data.mode,
+    });
+  } catch {
+    return res.status(500).json({ error: 'Unable to prepare Live Voice session.' });
+  }
+});
+
+router.post('/pronunciation', requireAuth, aiVoiceCoachRateLimiter, async (req: AuthRequest, res) => {
+  try {
+    const parsed = pronunciationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: parsed.error.issues[0]?.message || 'Both target text and spoken transcript are required.',
+      });
+    }
+
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner, parent } = access;
 
     const coachResult = await voiceProvider.coachPronunciation(
-      targetText,
-      transcript,
-      learner?.environment || 'young_adults',
-      learner?.cefrLevel || 'A2'
+      parsed.data.targetText,
+      parsed.data.transcript,
+      learner.environment,
+      learner.cefrLevel
     );
 
-    if (learner) {
-      await db.insert(voicePracticeSessions).values({
+    const storeTranscript = shouldStoreTranscripts(learner, parent);
+    await db.transaction(async (tx) => {
+      await tx.insert(voicePracticeSessions).values({
         learnerId: learner.id,
         mode: 'pronunciation',
-        targetText,
-        transcript,
+        targetText: parsed.data.targetText,
+        transcript: storeTranscript ? parsed.data.transcript : null,
         wordComparisonJson: coachResult.comparison,
         feedback: coachResult.guidance,
-        durationSeconds: Number(durationSeconds || 0),
+        durationSeconds: Math.min(600, Math.max(0, Math.round(parsed.data.durationSeconds ?? 0))),
       });
 
-      await db
-        .update(learnerProfiles)
-        .set({ xp: learner.xp + 20, updatedAt: new Date() })
-        .where(eq(learnerProfiles.id, learner.id));
-    }
+      await awardXpAtomically(tx, learner.id, 20);
+      await awardSingleAchievement(tx, learner.id, 'VOICE_PIONEER');
+    });
 
     return res.json(coachResult);
-  } catch (err: any) {
-    console.error('Pronunciation coach error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to analyse pronunciation practice.' });
   }
 });
 
 router.post('/speak-log', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { mode, targetText, transcript, feedback, durationSeconds } = req.body || {};
-    const [learner] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.userId, req.authUser!.id))
-      .limit(1);
-
-    if (!learner) return res.status(404).json({ error: 'Learner profile not found.' });
-
-    const [saved] = await db
-      .insert(voicePracticeSessions)
-      .values({
-        learnerId: learner.id,
-        mode: mode || 'speak',
-        targetText: targetText || null,
-        transcript: transcript || '',
-        feedback: feedback || 'Spoken recording completed.',
-        durationSeconds: Number(durationSeconds || 0),
-      })
-      .returning();
-
-    await db
-      .update(learnerProfiles)
-      .set({ xp: learner.xp + 15, updatedAt: new Date() })
-      .where(eq(learnerProfiles.id, learner.id));
-
-    const [voiceAch] = await db
-      .select()
-      .from(achievements)
-      .where(eq(achievements.code, 'VOICE_PIONEER'))
-      .limit(1);
-    if (voiceAch) {
-      await db
-        .insert(learnerAchievements)
-        .values({ learnerId: learner.id, achievementId: voiceAch.id })
-        .onConflictDoNothing();
+    const parsed = speakLogSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid speaking log payload.' });
     }
 
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner, parent } = access;
+
+    const storeTranscript = shouldStoreTranscripts(learner, parent);
+    const saved = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(voicePracticeSessions)
+        .values({
+          learnerId: learner.id,
+          mode: parsed.data.mode || 'speak',
+          targetText: parsed.data.targetText || null,
+          transcript: storeTranscript ? parsed.data.transcript || '' : null,
+          feedback: parsed.data.feedback || 'Spoken recording completed.',
+          durationSeconds: Math.min(600, Math.max(0, Math.round(parsed.data.durationSeconds ?? 0))),
+        })
+        .returning();
+
+      await awardXpAtomically(tx, learner.id, 15);
+      await awardSingleAchievement(tx, learner.id, 'VOICE_PIONEER');
+      return row;
+    });
+
     return res.status(201).json({ session: saved });
-  } catch (err: any) {
-    console.error('Speak log error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to save speaking practice.' });
   }
 });
 
-router.post('/conversation/summary', requireAuth, async (req: AuthRequest, res) => {
+router.post('/conversation/summary', requireAuth, aiVoiceCoachRateLimiter, async (req: AuthRequest, res) => {
   try {
-    const { mode, isDemoMode, transcript, durationSeconds } = req.body || {};
-    const [learner] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.userId, req.authUser!.id))
-      .limit(1);
+    const parsed = conversationSummarySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid conversation payload.' });
+    }
 
-    if (!learner) return res.status(404).json({ error: 'Learner profile not found.' });
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner, parent } = access;
 
-    const safeTranscript = Array.isArray(transcript) ? transcript : [];
+    const safeTranscript = (parsed.data.transcript || []).map((t) => ({
+      role: t.role,
+      text: t.text,
+      timestamp: t.timestamp || new Date().toISOString(),
+    }));
+
     const summaryResult = await voiceProvider.summarizeConversation(
       safeTranscript,
-      mode || 'Everyday conversations',
+      parsed.data.mode || 'Everyday conversations',
       learner.environment,
       learner.cefrLevel
     );
 
-    const [saved] = await db
-      .insert(conversationSessions)
-      .values({
-        learnerId: learner.id,
-        mode: mode || 'Everyday conversations',
-        cefrLevel: learner.cefrLevel,
-        environment: learner.environment,
-        isDemoMode: Boolean(isDemoMode),
-        transcriptJson: safeTranscript,
-        vocabularyNotesJson: summaryResult.vocabularyNotes,
-        summary: summaryResult.summary,
-        durationSeconds: Number(durationSeconds || 0),
-      })
-      .returning();
+    const storeTranscript = shouldStoreTranscripts(learner, parent);
+    const saved = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(conversationSessions)
+        .values({
+          learnerId: learner.id,
+          mode: parsed.data.mode || 'Everyday conversations',
+          cefrLevel: learner.cefrLevel,
+          environment: learner.environment,
+          isDemoMode: Boolean(parsed.data.isDemoMode),
+          transcriptJson: storeTranscript ? safeTranscript : [],
+          vocabularyNotesJson: summaryResult.vocabularyNotes,
+          summary: summaryResult.summary,
+          durationSeconds: Math.min(3600, Math.max(0, Math.round(parsed.data.durationSeconds ?? 0))),
+        })
+        .returning();
 
-    const [convAch] = await db
-      .select()
-      .from(achievements)
-      .where(eq(achievements.code, 'CONVERSATION_BUILDER'))
-      .limit(1);
-    if (convAch) {
-      await db
-        .insert(learnerAchievements)
-        .values({ learnerId: learner.id, achievementId: convAch.id })
-        .onConflictDoNothing();
-    }
+      await awardSingleAchievement(tx, learner.id, 'CONVERSATION_BUILDER');
+      return row;
+    });
 
     return res.status(201).json({ session: saved, ...summaryResult });
-  } catch (err: any) {
-    console.error('Conversation summary error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to summarize conversation.' });
   }
 });
 
 router.get('/history', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const [learner] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.userId, req.authUser!.id))
-      .limit(1);
+    const access = await resolveAuthorizedLearner(req.authUser!, req.query.learnerId);
+    if (!access.ok) {
+      const hasRequestedId =
+        req.query.learnerId !== undefined &&
+        req.query.learnerId !== null &&
+        req.query.learnerId !== '';
+      if (!hasRequestedId && access.status === 404) {
+        return res.json({ practiceSessions: [], conversationSessions: [] });
+      }
+      return res.status(access.status).json({ error: access.error });
+    }
+    const { learner, parent } = access;
+    const allowTranscripts = shouldStoreTranscripts(learner, parent);
 
-    if (!learner) return res.json({ practiceSessions: [], conversationSessions: [] });
-
-    const practiceSessions = await db
+    const practiceSessionsRaw = await db
       .select()
       .from(voicePracticeSessions)
       .where(eq(voicePracticeSessions.learnerId, learner.id))
       .orderBy(desc(voicePracticeSessions.createdAt))
       .limit(25);
 
-    const conversations = await db
+    const conversationsRaw = await db
       .select()
       .from(conversationSessions)
       .where(eq(conversationSessions.learnerId, learner.id))
       .orderBy(desc(conversationSessions.createdAt))
       .limit(20);
 
-    return res.json({ practiceSessions, conversationSessions: conversations });
-  } catch (err: any) {
-    console.error('Voice history error:', err);
+    return res.json({
+      practiceSessions: allowTranscripts
+        ? practiceSessionsRaw
+        : practiceSessionsRaw.map((p) => ({ ...p, transcript: null })),
+      conversationSessions: allowTranscripts
+        ? conversationsRaw
+        : conversationsRaw.map((c) => ({ ...c, transcriptJson: [] })),
+    });
+  } catch {
     return res.status(500).json({ error: 'Unable to load voice history.' });
   }
 });
 
 router.delete('/history/:id', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const id = Number(req.params.id);
-    const [learner] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.userId, req.authUser!.id))
-      .limit(1);
+    const id = parsePositiveInt(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid voice session ID.' });
 
-    if (!learner) return res.status(404).json({ error: 'Learner not found.' });
+    const access = await resolveAuthorizedLearner(req.authUser!, req.query.learnerId);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner } = access;
 
-    await db
+    const deleted = await db
       .delete(voicePracticeSessions)
-      .where(and(eq(voicePracticeSessions.id, id), eq(voicePracticeSessions.learnerId, learner.id)));
+      .where(and(eq(voicePracticeSessions.id, id), eq(voicePracticeSessions.learnerId, learner.id)))
+      .returning({ id: voicePracticeSessions.id });
+
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: 'Voice practice session not found.' });
+    }
 
     return res.json({ deleted: true });
-  } catch (err: any) {
-    console.error('Delete voice session error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to delete voice session.' });
   }
 });

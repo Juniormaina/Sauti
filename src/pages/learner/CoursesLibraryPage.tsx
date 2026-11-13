@@ -5,7 +5,10 @@ import { apiFetch } from '../../services/api';
 import { Course } from '../../types/sauti';
 import { ENVIRONMENTS } from '../../utils/environments';
 
+import { useAuthStore } from '../../stores/authStore';
+
 export function CoursesLibraryPage() {
+  const { activeChildId } = useAuthStore();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [envFilter, setEnvFilter] = useState('all');
@@ -16,6 +19,7 @@ export function CoursesLibraryPage() {
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams();
+    if (activeChildId) params.set('learnerId', String(activeChildId));
     if (envFilter !== 'all') params.set('environment', envFilter);
     if (levelFilter !== 'all') params.set('cefrLevel', levelFilter);
     if (skillFilter !== 'all') params.set('skillFocus', skillFilter);
@@ -24,7 +28,7 @@ export function CoursesLibraryPage() {
     apiFetch<{ courses: Course[] }>(`/api/learning/courses?${params.toString()}`)
       .then((res) => setCourses(res.courses || []))
       .finally(() => setLoading(false));
-  }, [envFilter, levelFilter, skillFilter, maxDuration]);
+  }, [activeChildId, envFilter, levelFilter, skillFilter, maxDuration]);
 
   return (
     <div className="space-y-8">

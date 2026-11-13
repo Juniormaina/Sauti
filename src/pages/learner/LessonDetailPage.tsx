@@ -19,35 +19,40 @@ export function LessonDetailPage() {
   const [completedActivityIds, setCompletedActivityIds] = useState<number[]>([]);
   const [lessonCompleted, setLessonCompleted] = useState<{
     xpEarned: number;
+    alreadyCompleted?: boolean;
     newlyEarnedAchievements: string[];
   } | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
   const isKids =
     learnerProfile?.environment === 'little_voices' ||
     learnerProfile?.environment === 'young_explorers';
 
   useEffect(() => {
-    apiFetch<any>(`/api/learning/lessons/${id}`).then((res) => {
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/lessons/${id}${qs}`).then((res) => {
       setLesson(res.lesson);
       setCourse(res.course);
       setActivities(res.activities || []);
     });
-  }, [id]);
+  }, [id, activeChildId]);
 
   const handleCompleteLesson = async () => {
     if (!lesson) return;
     setCompleting(true);
+    setCompleteError(null);
     try {
       const res = await apiFetch<any>(`/api/learning/lessons/${lesson.id}/complete`, {
         method: 'POST',
         body: JSON.stringify({
           learnerId: activeChildId || undefined,
           minutesSpent: lesson.durationMinutes,
-          score: 100,
         }),
       });
       setLessonCompleted(res);
+    } catch (err: any) {
+      setCompleteError(err.message || 'Complete all activities before finishing this lesson.');
     } finally {
       setCompleting(false);
     }
@@ -177,7 +182,11 @@ export function LessonDetailPage() {
           <div className="space-y-2">
             <div className="flex items-center gap-2 font-display text-2xl font-bold">
               <CheckCircle2 className="w-6 h-6 text-[#F6C96B]" />
-              <span>Lesson completed (+{lessonCompleted.xpEarned} XP)</span>
+              <span>
+                {lessonCompleted.alreadyCompleted
+                  ? 'Lesson practice updated'
+                  : `Lesson completed (+${lessonCompleted.xpEarned} XP)`}
+              </span>
             </div>
             {lessonCompleted.newlyEarnedAchievements?.length > 0 && (
               <p className="text-sm text-[#F6C96B] flex items-center gap-2">
@@ -192,6 +201,7 @@ export function LessonDetailPage() {
             <p className="text-sm text-[#FFF8ED]/80">
               Completing updates your streak, progress bars, and milestone rewards.
             </p>
+            {completeError && <p className="text-xs text-[#F6C96B] mt-2">{completeError}</p>}
           </div>
         )}
 

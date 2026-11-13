@@ -18,7 +18,13 @@ export interface AuthRequest extends Request {
   authUser?: AuthUserContext;
 }
 
+const MAX_TOKEN_LENGTH = 4096;
+
 export async function authenticateToken(token: string): Promise<AuthUserContext | null> {
+  if (!token || typeof token !== 'string' || token.length > MAX_TOKEN_LENGTH) {
+    return null;
+  }
+
   // 1. Check SAUTI signed HMAC session token (email/password login)
   if (token.startsWith('sauti.')) {
     const payload = verifySessionToken(token);
@@ -56,6 +62,20 @@ export async function authenticateToken(token: string): Promise<AuthUserContext 
   }
 }
 
+export const optionalAuth = async (req: AuthRequest, _res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (token) {
+      const authUser = await authenticateToken(token);
+      if (authUser) {
+        req.authUser = authUser;
+      }
+    }
+  }
+  next();
+};
+
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -79,7 +99,7 @@ export const requireRole = (...allowedRoles: string[]) => {
     }
     if (!allowedRoles.includes(req.authUser.role)) {
       return res.status(403).json({
-        error: `Access restricted. Requires one of: ${allowedRoles.join(', ')}`,
+        error: 'Access restricted for this account role.',
       });
     }
     next();

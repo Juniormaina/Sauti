@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { env, isGeminiConfigured } from '../config/env.ts';
+import { buildAgeSafetyPromptGuard } from './childSafetyService.ts';
 
 export interface WordComparisonItem {
   word: string;
@@ -27,6 +28,14 @@ export interface IVoiceProvider {
 }
 
 let _aiClient: GoogleGenAI | null = null;
+
+export function sanitizeAiErrorMessage(err: unknown, fallbackMessage: string): string {
+  const status = (err as any)?.status || (err as any)?.code;
+  if (status === 429) {
+    return 'Voice service is temporarily busy. Please try again in a moment.';
+  }
+  return fallbackMessage;
+}
 
 export function getGeminiClient(): GoogleGenAI | null {
   if (!isGeminiConfigured()) return null;
@@ -129,7 +138,7 @@ class GeminiVoiceProvider implements IVoiceProvider {
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (!base64Audio) {
-      throw new Error('Gemini TTS did not return audio data.');
+      throw new Error('Speech synthesis did not return audio data.');
     }
 
     return {
@@ -180,7 +189,7 @@ class GeminiVoiceProvider implements IVoiceProvider {
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (!base64Audio) {
-      throw new Error('Gemini multi-speaker TTS did not return audio data.');
+      throw new Error('Multi-speaker synthesis did not return audio data.');
     }
     return { audioBase64: base64Audio, mimeType: 'audio/wav' };
   }
@@ -239,28 +248,44 @@ class GeminiVoiceProvider implements IVoiceProvider {
     }
 
     const missed = comparison.filter((c) => c.status !== 'matched').map((c) => c.word);
-    const response = await ai.models.generateContent({
-      model: env.models.text,
-      contents: `Target phrase: "${targetText}"
+    const safetyGuard = buildAgeSafetyPromptGuard(environment);
+    try {
+      const response = await ai.models.generateContent({
+        model: env.models.text,
+        contents: `Target phrase: "${targetText}"
 Transcribed speech: "${transcript}"
 Words differing in transcript: ${missed.length ? missed.join(', ') : 'None'}
 Learner environment: ${environment}, CEFR level: ${cefrLevel}.
 Provide 2-3 encouraging, practical sentences of English pronunciation and phrasing guidance tailored to this learner. Never invent phonetic accuracy percentages.`,
-      config: {
-        systemInstruction:
-          'You are SAUTI Pronunciation Coach. Be encouraging, warm, clear, and honest about what speech transcription can and cannot observe.',
-      },
-    });
+        config: {
+          systemInstruction: `You are SAUTI Pronunciation Coach. Be encouraging, warm, clear, and honest about what speech transcription can and cannot observe. ${safetyGuard}`,
+        },
+      });
 
-    return {
-      targetText,
-      transcript,
-      comparison,
-      matchedRatio,
-      guidance: (response.text || '').trim() || 'Great effort! Listen closely to the rhythm and try one more time.',
-      phoneticDisclaimer,
-      aiPowered: true,
-    };
+      return {
+        targetText,
+        transcript,
+        comparison,
+        matchedRatio,
+        guidance: (response.text || '').trim() || 'Great effort! Listen closely to the rhythm and try one more time.',
+        phoneticDisclaimer,
+        aiPowered: true,
+      };
+    } catch {
+      const missingOrSub = comparison.filter((c) => c.status !== 'matched').map((c) => c.word);
+      return {
+        targetText,
+        transcript,
+        comparison,
+        matchedRatio,
+        guidance:
+          missingOrSub.length === 0
+            ? 'Your spoken transcript matched the target words clearly. Replay your recording to check rhythm and stress.'
+            : `Focus on speaking these words slowly and clearly: ${missingOrSub.join(', ')}.`,
+        phoneticDisclaimer,
+        aiPowered: false,
+      };
+    }
   }
 
   async evaluateActivityAnswer(
@@ -277,27 +302,27 @@ Provide 2-3 encouraging, practical sentences of English pronunciation and phrasi
       };
     }
 
-    const response = await ai.models.generateContent({
-      model: env.models.text,
-      contents: `Activity prompt: "${prompt}"
+    const safetyGuard = buildAgeSafetyPromptGuard(environment);
+    try {
+      const response = await ai.models.generateContent({
+        model: env.models.text,
+        contents: `Activity prompt: "${prompt}"
 Learner response: "${learnerResponse}"
 Environment: ${environment}, CEFR level: ${cefrLevel}.`,
-      config: {
-        systemInstruction:
-          'You are an encouraging SAUTI English teacher. Give brief, kind, constructive feedback appropriate to the learner age and CEFR level.',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            feedback: { type: Type.STRING },
-            suggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+        config: {
+          systemInstruction: `You are an encouraging SAUTI English teacher. Give brief, kind, constructive feedback appropriate to the learner age and CEFR level. ${safetyGuard}`,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              feedback: { type: Type.STRING },
+              suggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['feedback', 'suggestions'],
           },
-          required: ['feedback', 'suggestions'],
         },
-      },
-    });
+      });
 
-    try {
       return JSON.parse(response.text || '{}');
     } catch {
       return {
@@ -323,36 +348,40 @@ Environment: ${environment}, CEFR level: ${cefrLevel}.`,
       };
     }
 
-    const formatted = transcript.map((t) => `${t.role === 'user' ? 'Learner' : 'SAUTI'}: ${t.text}`).join('\n');
-    const response = await ai.models.generateContent({
-      model: env.models.text,
-      contents: `Mode: ${mode}, Environment: ${environment}, CEFR: ${cefrLevel}\n\nTranscript:\n${formatted}`,
-      config: {
-        systemInstruction:
-          'Summarize this English learning conversation warmly, highlighting strengths, 1 gentle suggestion, and up to 3 useful vocabulary notes.',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING },
-            vocabularyNotes: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  term: { type: Type.STRING },
-                  explanation: { type: Type.STRING },
-                },
-                required: ['term', 'explanation'],
-              },
-            },
-          },
-          required: ['summary', 'vocabularyNotes'],
-        },
-      },
-    });
+    const safetyGuard = buildAgeSafetyPromptGuard(environment);
+    const formatted = transcript
+      .slice(-60)
+      .map((t) => `${t.role === 'user' ? 'Learner' : 'SAUTI'}: ${t.text.slice(0, 500)}`)
+      .join('\n');
 
     try {
+      const response = await ai.models.generateContent({
+        model: env.models.text,
+        contents: `Mode: ${mode}, Environment: ${environment}, CEFR: ${cefrLevel}\n\nTranscript:\n${formatted}`,
+        config: {
+          systemInstruction: `Summarize this English learning conversation warmly, highlighting strengths, 1 gentle suggestion, and up to 3 useful vocabulary notes. Do not include personal identifying information in the summary. ${safetyGuard}`,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              vocabularyNotes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    term: { type: Type.STRING },
+                    explanation: { type: Type.STRING },
+                  },
+                  required: ['term', 'explanation'],
+                },
+              },
+            },
+            required: ['summary', 'vocabularyNotes'],
+          },
+        },
+      });
+
       return JSON.parse(response.text || '{}');
     } catch {
       return {

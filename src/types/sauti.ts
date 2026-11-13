@@ -66,6 +66,9 @@ export interface ParentProfile {
   id: number;
   userId: number;
   consentAcceptedAt: string | null;
+  consentVersion?: string | null;
+  consentRevokedAt?: string | null;
+  hasActiveConsent?: boolean;
   recordingRetentionDays: number;
   allowAiLiveForChildren: boolean;
 }

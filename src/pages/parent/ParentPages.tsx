@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { BarChart3, CheckCircle2, LayoutDashboard, Plus, Settings, ShieldCheck, Users } from 'lucide-react';
+import {
+  AlertCircle,
+  BarChart3,
+  CheckCircle2,
+  LayoutDashboard,
+  Plus,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  Users,
+} from 'lucide-react';
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
@@ -12,21 +22,32 @@ const PARENT_NAV = [
   { to: '/parent/settings', label: 'Privacy & Controls', icon: Settings },
 ];
 
-export function ParentDashboardPage({ section = 'overview' }: { section?: 'overview' | 'children' | 'reports' | 'settings' }) {
+export function ParentDashboardPage({
+  section = 'overview',
+}: {
+  section?: 'overview' | 'children' | 'reports' | 'settings';
+}) {
   const navigate = useNavigate();
   const { id } = useParams();
   const { setActiveChildId, setLearnerProfile } = useAuthStore();
 
-  const [data, setData] = useState<{ parent: any; children: any[] } | null>(null);
+  const [data, setData] = useState<{ parent: any; children: any[]; consentEvents?: any[] } | null>(null);
   const [childDetail, setChildDetail] = useState<any | null>(null);
   const [name, setName] = useState('');
   const [env, setEnv] = useState<'little_voices' | 'young_explorers' | 'teen_voices'>('little_voices');
   const [ageRange, setAgeRange] = useState<'3-5' | '6-10' | '11-17'>('3-5');
-  const [consent, setConsent] = useState(true);
+  const [consent, setConsent] = useState(false);
+  const [portalConsentChecked, setPortalConsentChecked] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const loadDashboard = () => {
-    apiFetch<any>('/api/parent/dashboard').then(setData).catch(() => {});
+    apiFetch<any>('/api/parent/dashboard')
+      .then((res) => {
+        setData(res);
+        setErrMsg(null);
+      })
+      .catch((err) => setErrMsg(err.message || 'Unable to load parent dashboard.'));
   };
 
   useEffect(() => {
@@ -35,36 +56,87 @@ export function ParentDashboardPage({ section = 'overview' }: { section?: 'overv
 
   useEffect(() => {
     if (id) {
-      apiFetch<any>(`/api/parent/children/${id}`).then(setChildDetail).catch(() => {});
+      apiFetch<any>(`/api/parent/children/${id}`)
+        .then(setChildDetail)
+        .catch((err) => setErrMsg(err.message || 'Unable to load child profile.'));
     }
   }, [id]);
+
+  const hasActiveConsent = Boolean(data?.parent?.hasActiveConsent);
+
+  const handleAcceptConsent = async () => {
+    setMsg(null);
+    setErrMsg(null);
+    try {
+      const res = await apiFetch<any>('/api/parent/consent', {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true }),
+      });
+      setData((prev) => (prev ? { ...prev, parent: res.parent } : prev));
+      setConsent(true);
+      setPortalConsentChecked(false);
+      setMsg('Guardian consent recorded. You can now add child profiles and manage privacy settings.');
+      loadDashboard();
+    } catch (err: any) {
+      setErrMsg(err.message || 'Unable to record guardian consent.');
+    }
+  };
+
+  const handleRevokeConsent = async () => {
+    setMsg(null);
+    setErrMsg(null);
+    try {
+      const res = await apiFetch<any>('/api/parent/consent/revoke', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      setData((prev) => (prev ? { ...prev, parent: res.parent } : prev));
+      setConsent(false);
+      setMsg('Guardian consent revoked. Supervised Live AI voice sessions have been paused.');
+      loadDashboard();
+    } catch (err: any) {
+      setErrMsg(err.message || 'Unable to revoke guardian consent.');
+    }
+  };
 
   const handleCreateChild = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    await apiFetch('/api/parent/children', {
-      method: 'POST',
-      body: JSON.stringify({
-        displayName: name,
-        environment: env,
-        ageRange,
-        cefrLevel: 'A1',
-        dailyGoalMinutes: 15,
-        consentConfirmed: consent,
-      }),
-    });
-    setName('');
-    setMsg('Child profile created safely.');
-    loadDashboard();
+    setErrMsg(null);
+    try {
+      await apiFetch('/api/parent/children', {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: name,
+          environment: env,
+          ageRange,
+          cefrLevel: 'A1',
+          dailyGoalMinutes: 15,
+          consentConfirmed: consent,
+        }),
+      });
+      setName('');
+      setConsent(false);
+      setMsg('Child profile created safely.');
+      loadDashboard();
+    } catch (err: any) {
+      setErrMsg(err.message || 'Unable to create child profile.');
+    }
   };
 
   const handleUpdatePrivacy = async (allowLive: boolean, retentionDays: number) => {
-    const res = await apiFetch<any>('/api/parent/settings', {
-      method: 'PATCH',
-      body: JSON.stringify({ allowAiLiveForChildren: allowLive, recordingRetentionDays: retentionDays }),
-    });
-    setData((prev) => (prev ? { ...prev, parent: res.parent } : prev));
-    setMsg('Privacy and child-safety settings updated.');
+    setMsg(null);
+    setErrMsg(null);
+    try {
+      const res = await apiFetch<any>('/api/parent/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ allowAiLiveForChildren: allowLive, recordingRetentionDays: retentionDays }),
+      });
+      setData((prev) => (prev ? { ...prev, parent: res.parent } : prev));
+      setMsg('Privacy and child-safety settings updated.');
+    } catch (err: any) {
+      setErrMsg(err.message || 'Unable to update privacy settings.');
+    }
   };
 
   const launchChildWorkspace = (child: any) => {
@@ -80,6 +152,51 @@ export function ParentDashboardPage({ section = 'overview' }: { section?: 'overv
           <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-4 text-sm flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-[#245C45]" />
             <span>{msg}</span>
+          </div>
+        )}
+
+        {errMsg && (
+          <div className="rounded-xl bg-[#F28B75]/15 border border-[#F28B75] p-4 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-[#B43C25]" />
+            <span>{errMsg}</span>
+          </div>
+        )}
+
+        {data && !hasActiveConsent && !id && (
+          <div className="rounded-3xl bg-[#FFF1E6] border border-[#F28B75]/50 p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 text-[#B43C25] shrink-0 mt-0.5" />
+              <div>
+                <h2 className="font-display text-lg font-bold text-[#17201C]">
+                  Explicit Guardian Consent Required
+                </h2>
+                <p className="text-sm text-[#4A5851] mt-1">
+                  Before creating child profiles or enabling supervised voice practice, please review
+                  and confirm guardian consent for private, ad-free learning with no public child
+                  profiles or stranger messaging.
+                </p>
+              </div>
+            </div>
+            <label className="flex items-start gap-2.5 text-xs text-[#17201C] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={portalConsentChecked}
+                onChange={(e) => setPortalConsentChecked(e.target.checked)}
+                className="mt-0.5 accent-[#245C45]"
+              />
+              <span>
+                I am the parent or legal guardian and explicitly consent to child-safe English
+                learning and audio processing under these family privacy controls.
+              </span>
+            </label>
+            <button
+              type="button"
+              disabled={!portalConsentChecked}
+              onClick={handleAcceptConsent}
+              className="px-5 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
+            >
+              Confirm guardian consent
+            </button>
           </div>
         )}
 
@@ -139,14 +256,15 @@ export function ParentDashboardPage({ section = 'overview' }: { section?: 'overv
             <h1 className="font-display text-2xl font-bold">Child Privacy &amp; Safety Controls</h1>
             <p className="text-sm text-[#4A5851]">
               Children never have public profiles or open messaging. Configure AI Live voice
-              access and transcript retention below.
+              access, transcript retention, and guardian consent below.
             </p>
             <label className="flex items-start gap-3 p-4 rounded-2xl bg-[#FFF1E6] cursor-pointer text-sm">
               <input
                 type="checkbox"
+                disabled={!hasActiveConsent}
                 checked={Boolean(data?.parent?.allowAiLiveForChildren)}
                 onChange={(e) =>
-                  handleUpdatePrivacy(e.target.checked, data?.parent?.recordingRetentionDays || 7)
+                  handleUpdatePrivacy(e.target.checked, data?.parent?.recordingRetentionDays ?? 7)
                 }
                 className="mt-1 accent-[#245C45]"
               />
@@ -159,6 +277,42 @@ export function ParentDashboardPage({ section = 'overview' }: { section?: 'overv
                 </span>
               </span>
             </label>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#245C45] mb-1.5">
+                Voice Transcript Retention
+              </label>
+              <select
+                value={data?.parent?.recordingRetentionDays ?? 7}
+                onChange={(e) =>
+                  handleUpdatePrivacy(
+                    Boolean(data?.parent?.allowAiLiveForChildren),
+                    Number(e.target.value)
+                  )
+                }
+                className="w-full rounded-xl border border-[#245C45]/20 px-3.5 py-2.5 text-sm"
+              >
+                <option value={0}>Do not store child transcripts (0 days)</option>
+                <option value={7}>Keep for 7 days</option>
+                <option value={30}>Keep for 30 days</option>
+                <option value={90}>Keep for 90 days</option>
+              </select>
+            </div>
+
+            {hasActiveConsent && (
+              <div className="pt-3 border-t border-[#245C45]/10 flex items-center justify-between gap-4">
+                <div className="text-xs text-[#4A5851]">
+                  Consent active ({data?.parent?.consentVersion || 'current'})
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRevokeConsent}
+                  className="px-4 py-2 rounded-xl border border-[#B43C25]/40 text-[#B43C25] text-xs font-semibold hover:bg-[#F28B75]/10"
+                >
+                  Revoke guardian consent
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -237,12 +391,13 @@ export function ParentDashboardPage({ section = 'overview' }: { section?: 'overv
                 </select>
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold py-2.5 px-4"
+                  disabled={!hasActiveConsent || !consent}
+                  className="rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold py-2.5 px-4 disabled:opacity-50"
                 >
                   Add child
                 </button>
               </div>
-              <label className="flex items-center gap-2 text-xs text-[#4A5851]">
+              <label className="flex items-center gap-2 text-xs text-[#4A5851] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={consent}

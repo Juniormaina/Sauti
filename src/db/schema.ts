@@ -38,8 +38,24 @@ export const parentProfiles = pgTable('parent_profiles', {
     .notNull()
     .unique(),
   consentAcceptedAt: timestamp('consent_accepted_at'),
+  consentVersion: text('consent_version'),
+  consentRevokedAt: timestamp('consent_revoked_at'),
   recordingRetentionDays: integer('recording_retention_days').notNull().default(7),
   allowAiLiveForChildren: boolean('allow_ai_live_for_children').notNull().default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const guardianConsentEvents = pgTable('guardian_consent_events', {
+  id: serial('id').primaryKey(),
+  parentId: integer('parent_id')
+    .references(() => parentProfiles.id, { onDelete: 'cascade' })
+    .notNull(),
+  actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+  action: text('action').notNull(), // accepted | revoked | child_created
+  consentVersion: text('consent_version').notNull(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -201,6 +217,7 @@ export const learningAttempts = pgTable('learning_attempts', {
   answerJson: jsonb('answer_json').$type<Record<string, unknown>>().notNull(),
   isCorrect: boolean('is_correct').notNull().default(false),
   score: integer('score').notNull().default(0),
+  xpAwarded: integer('xp_awarded').notNull().default(0),
   feedback: text('feedback'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
@@ -217,6 +234,7 @@ export const learnerProgress = pgTable(
       .notNull(),
     status: text('status').notNull().default('in_progress'), // not_started | in_progress | completed
     score: integer('score').notNull().default(0),
+    xpAwarded: integer('xp_awarded').notNull().default(0),
     minutesSpent: integer('minutes_spent').notNull().default(5),
     completedAt: timestamp('completed_at'),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

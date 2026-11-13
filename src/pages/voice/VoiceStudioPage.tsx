@@ -15,7 +15,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import { apiFetch, getActiveAuthToken } from '../../services/api';
+import { apiFetch } from '../../services/api';
 import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { ResilientImage } from '../../components/ui/ResilientImage';
@@ -83,7 +83,7 @@ function floatTo16BitPCMBase64(input: Float32Array): string {
 }
 
 export function VoiceStudioPage() {
-  const { learnerProfile } = useAuthStore();
+  const { learnerProfile, activeChildId } = useAuthStore();
   const [activeTab, setActiveTab] = useState<StudioTab>('listen');
   const [statusInfo, setStatusInfo] = useState<{
     geminiConfigured: boolean;
@@ -139,10 +139,11 @@ export function VoiceStudioPage() {
 
   const loadHistory = async () => {
     try {
+      const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
       const data = await apiFetch<{
         practiceSessions: VoicePracticeSession[];
         conversationSessions: ConversationSession[];
-      }>('/api/voice/history');
+      }>(`/api/voice/history${qs}`);
       setPracticeHistory(data.practiceSessions || []);
       setConvHistory(data.conversationSessions || []);
     } catch {
@@ -160,7 +161,7 @@ export function VoiceStudioPage() {
       stopLiveConversation();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeChildId]);
 
   // --- Speak & Practise handler ---
   const handleSubmitSpeakRecording = async () => {
@@ -197,6 +198,7 @@ export function VoiceStudioPage() {
       await apiFetch('/api/voice/speak-log', {
         method: 'POST',
         body: JSON.stringify({
+          learnerId: activeChildId || undefined,
           mode: 'speak',
           transcript: capturedText,
           feedback,
@@ -247,6 +249,7 @@ export function VoiceStudioPage() {
       const res = await apiFetch('/api/voice/pronunciation', {
         method: 'POST',
         body: JSON.stringify({
+          learnerId: activeChildId || undefined,
           targetText,
           transcript: spokenText,
           durationSeconds: coachRecorder.durationSeconds,
@@ -310,23 +313,33 @@ export function VoiceStudioPage() {
     setSessionSummary(null);
     setLiveState('connecting');
 
-    const token = await getActiveAuthToken();
-    if (!token) {
-      setLiveState('demo_mode');
-      setLiveStatusMsg('Sign in to connect a live voice session, or test Demo Mode below.');
+    let ticketRes: { ticket: string };
+    try {
+      ticketRes = await apiFetch<{ ticket: string }>('/api/voice/live-ticket', {
+        method: 'POST',
+        body: JSON.stringify({
+          learnerId: activeChildId || undefined,
+          mode: convMode,
+          voiceName,
+        }),
+      });
+    } catch (err: any) {
+      const message = err?.message || 'Unable to start Live Voice session.';
+      const lower = message.toLowerCase();
+      if (lower.includes('authentication') || lower.includes('session')) {
+        setLiveState('demo_mode');
+        setLiveStatusMsg('Sign in to connect a live voice session, or test Demo Mode below.');
+      } else {
+        setLiveState('restricted');
+        setLiveStatusMsg(message);
+      }
       return;
     }
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const params = new URLSearchParams({
-      token,
-      mode: convMode,
-      environment: learnerProfile?.environment || 'young_adults',
-      cefrLevel: learnerProfile?.cefrLevel || 'A2',
-      voiceName,
-    });
-
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/live?${params.toString()}`);
+    const ws = new WebSocket(
+      `${proto}//${window.location.host}/ws/live?ticket=${encodeURIComponent(ticketRes.ticket)}`
+    );
     wsRef.current = ws;
 
     ws.onmessage = async (ev) => {
@@ -421,6 +434,7 @@ export function VoiceStudioPage() {
       }>('/api/voice/conversation/summary', {
         method: 'POST',
         body: JSON.stringify({
+          learnerId: activeChildId || undefined,
           mode: convMode,
           isDemoMode: wasDemo,
           transcript: transcriptList,
@@ -436,7 +450,8 @@ export function VoiceStudioPage() {
 
   const handleDeletePractice = async (id: number) => {
     try {
-      await apiFetch(`/api/voice/history/${id}`, { method: 'DELETE' });
+      const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+      await apiFetch(`/api/voice/history/${id}${qs}`, { method: 'DELETE' });
       setPracticeHistory((prev) => prev.filter((item) => item.id !== id));
     } catch {
       // ignore

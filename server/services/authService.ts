@@ -19,10 +19,14 @@ export function hashPassword(password: string): string {
 export function verifyPassword(password: string, storedHash: string): boolean {
   const [salt, keyHex] = storedHash.split(':');
   if (!salt || !keyHex) return false;
-  const derived = crypto.scryptSync(password, salt, 64);
-  const keyBuf = Buffer.from(keyHex, 'hex');
-  if (derived.length !== keyBuf.length) return false;
-  return crypto.timingSafeEqual(derived, keyBuf);
+  try {
+    const derived = crypto.scryptSync(password, salt, 64);
+    const keyBuf = Buffer.from(keyHex, 'hex');
+    if (derived.length !== keyBuf.length) return false;
+    return crypto.timingSafeEqual(derived, keyBuf);
+  } catch {
+    return false;
+  }
 }
 
 export interface SessionPayload {
@@ -44,19 +48,31 @@ export function signSessionToken(payload: Omit<SessionPayload, 'exp'>, ttlSecond
 }
 
 export function verifySessionToken(token: string): SessionPayload | null {
-  if (!token.startsWith('sauti.')) return null;
+  if (!token || !token.startsWith('sauti.') || token.length > 4096) return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [, encoded, sig] = parts;
+  if (!encoded || !sig) return null;
+
   const expectedSig = crypto.createHmac('sha256', env.sessionSecret).update(encoded).digest('base64url');
   const sigBuf = Buffer.from(sig);
   const expectedBuf = Buffer.from(expectedSig);
   if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
     return null;
   }
+
   try {
     const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as SessionPayload;
-    if (parsed.exp < Math.floor(Date.now() / 1000)) return null;
+    if (
+      !parsed ||
+      typeof parsed.userId !== 'number' ||
+      !Number.isSafeInteger(parsed.userId) ||
+      parsed.userId <= 0 ||
+      typeof parsed.exp !== 'number' ||
+      parsed.exp < Math.floor(Date.now() / 1000)
+    ) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -67,23 +83,29 @@ export async function getOrCreateFirebaseUser(
   uid: string,
   email: string,
   displayName?: string,
-  role = 'LEARNER',
-  accountType = 'individual'
+  requestedRole = 'LEARNER',
+  requestedAccountType = 'individual'
 ) {
-  const safeName = displayName || email.split('@')[0] || 'Learner';
+  const safeName = (displayName || email.split('@')[0] || 'Learner').trim().slice(0, 100);
+  // Never allow client sync requests to self-assign ADMIN
+  const safeRole = ['LEARNER', 'PARENT', 'TEACHER'].includes(requestedRole) ? requestedRole : 'LEARNER';
+  const safeAccountType = ['individual', 'parent', 'teacher', 'institution'].includes(requestedAccountType)
+    ? requestedAccountType
+    : 'individual';
+
   const [user] = await db
     .insert(users)
     .values({
       uid,
-      email,
+      email: email.toLowerCase().trim(),
       displayName: safeName,
-      role,
-      accountType,
+      role: safeRole,
+      accountType: safeAccountType,
     })
     .onConflictDoUpdate({
       target: users.uid,
       set: {
-        email,
+        email: email.toLowerCase().trim(),
         updatedAt: new Date(),
       },
     })
@@ -99,9 +121,12 @@ export async function ensureRoleProfile(userId: number, role: string, displayNam
       where: eq(parentProfiles.userId, userId),
     });
     if (!existing) {
+      // Do NOT silently auto-grant guardian consent; explicit acceptance is required.
       await db.insert(parentProfiles).values({
         userId,
-        consentAcceptedAt: new Date(),
+        consentAcceptedAt: null,
+        consentVersion: null,
+        consentRevokedAt: null,
       });
     }
   } else if (role === 'TEACHER') {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../src/db/index.ts';
 import {
   achievements,
@@ -16,81 +17,71 @@ import {
   programmes,
   voicePracticeSessions,
 } from '../../src/db/schema.ts';
-import { AuthRequest, requireAuth } from '../middleware/auth.ts';
+import { AuthRequest, optionalAuth, requireAuth } from '../middleware/auth.ts';
+import { createRateLimiter } from '../middleware/rateLimit.ts';
 import { ensureSeeded } from '../services/seedService.ts';
 import { compareTranscriptWords, voiceProvider } from '../services/aiVoiceService.ts';
+import { parsePositiveInt, resolveAuthorizedLearner } from '../services/authorizationService.ts';
+import {
+  canLearnerAccessCourseEnvironment,
+  defaultAgeRangeForEnvironment,
+  shouldStoreTranscripts,
+  validateEnvironmentTransition,
+} from '../services/childSafetyService.ts';
+import { awardXpAtomically, checkAndAwardAchievements } from '../services/progressService.ts';
 
 const router = Router();
 
-async function getLearnerForUser(userId: number, activeChildId?: number) {
-  if (activeChildId) {
-    const [child] = await db
-      .select()
-      .from(learnerProfiles)
-      .where(eq(learnerProfiles.id, activeChildId))
-      .limit(1);
-    if (child) return child;
-  }
-  const [learner] = await db
-    .select()
-    .from(learnerProfiles)
-    .where(eq(learnerProfiles.userId, userId))
-    .limit(1);
-  return learner || null;
-}
+const aiActivityLimiter = createRateLimiter({
+  name: 'ai-activity-eval',
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 30,
+  keyGenerator: (req) => `user:${(req as AuthRequest).authUser?.id ?? 'anon'}`,
+  message: 'Too many AI-evaluated activity submissions. Please pause briefly before submitting again.',
+});
 
-async function checkAndAwardAchievements(learnerId: number) {
-  const allAchievements = await db.select().from(achievements);
-  const existing = await db
-    .select()
-    .from(learnerAchievements)
-    .where(eq(learnerAchievements.learnerId, learnerId));
-  const earnedIds = new Set(existing.map((e) => e.achievementId));
+const attemptSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  answer: z.union([
+    z.string().max(4000),
+    z.array(z.string().max(200)).max(100),
+    z.record(z.string().max(200), z.string().max(200)),
+  ]),
+});
 
-  const completedLessons = await db
-    .select()
-    .from(learnerProgress)
-    .where(and(eq(learnerProgress.learnerId, learnerId), eq(learnerProgress.status, 'completed')));
+const completeLessonSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  minutesSpent: z.number().finite().min(1).max(240).optional(),
+});
 
-  const voiceCount = await db
-    .select()
-    .from(voicePracticeSessions)
-    .where(eq(voicePracticeSessions.learnerId, learnerId));
+const settingsSchema = z.object({
+  learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  displayName: z.string().trim().min(2).max(80).optional(),
+  environment: z
+    .enum([
+      'little_voices',
+      'young_explorers',
+      'teen_voices',
+      'young_adults',
+      'professional_english',
+      'lifelong_english',
+    ])
+    .optional(),
+  cefrLevel: z.enum(['A1', 'A2', 'B1', 'B2', 'C1', 'C2']).optional(),
+  dailyGoalMinutes: z.number().int().min(5).max(120).optional(),
+  voicePreferences: z
+    .object({
+      voiceName: z.enum(['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr']),
+      playbackSpeed: z.number().min(0.5).max(1.75),
+      saveTranscripts: z.boolean(),
+    })
+    .optional(),
+});
 
-  const convCount = await db
-    .select()
-    .from(conversationSessions)
-    .where(eq(conversationSessions.learnerId, learnerId));
-
-  const [learner] = await db
-    .select()
-    .from(learnerProfiles)
-    .where(eq(learnerProfiles.id, learnerId))
-    .limit(1);
-
-  const newlyEarned: string[] = [];
-
-  for (const ach of allAchievements) {
-    if (earnedIds.has(ach.id)) continue;
-    let qualifies = false;
-    if (ach.code === 'FIRST_LESSON' && completedLessons.length >= 1) qualifies = true;
-    if (ach.code === 'FIVE_LESSONS' && completedLessons.length >= 5) qualifies = true;
-    if (ach.code === 'VOICE_PIONEER' && voiceCount.length >= 1) qualifies = true;
-    if (ach.code === 'CONVERSATION_BUILDER' && convCount.length >= 1) qualifies = true;
-    if (ach.code === 'STREAK_THREE' && (learner?.streakDays || 0) >= 3) qualifies = true;
-
-    if (qualifies) {
-      await db.insert(learnerAchievements).values({ learnerId, achievementId: ach.id }).onConflictDoNothing();
-      if (learner) {
-        await db
-          .update(learnerProfiles)
-          .set({ xp: learner.xp + ach.xpReward })
-          .where(eq(learnerProfiles.id, learnerId));
-      }
-      newlyEarned.push(ach.title);
-    }
-  }
-  return newlyEarned;
+async function getOptionalAuthorizedLearner(req: AuthRequest) {
+  if (!req.authUser) return null;
+  const result = await resolveAuthorizedLearner(req.authUser, req.query.learnerId);
+  return result.ok ? result.learner : null;
 }
 
 router.get('/programmes', async (_req, res) => {
@@ -98,16 +89,16 @@ router.get('/programmes', async (_req, res) => {
     await ensureSeeded();
     const rows = await db.select().from(programmes).orderBy(asc(programmes.sortOrder));
     return res.json({ programmes: rows });
-  } catch (err: any) {
-    console.error('Programmes fetch error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load programmes.' });
   }
 });
 
-router.get('/courses', async (req, res) => {
+router.get('/courses', optionalAuth, async (req: AuthRequest, res) => {
   try {
     await ensureSeeded();
     const { environment, cefrLevel, topic, skillFocus, maxMinutes } = req.query;
+    const learner = await getOptionalAuthorizedLearner(req);
 
     const allProgrammes = await db.select().from(programmes).orderBy(asc(programmes.sortOrder));
     const allCourses = await db.select().from(courses).orderBy(asc(courses.sortOrder));
@@ -118,7 +109,11 @@ router.get('/courses', async (req, res) => {
       .map((c) => ({
         ...c,
         programme: progMap.get(c.programmeId) || null,
-      }));
+      }))
+      .filter((c) => {
+        if (!learner) return true;
+        return canLearnerAccessCourseEnvironment(learner, c.programme?.environment);
+      });
 
     if (environment && environment !== 'all') {
       filtered = filtered.filter((c) => c.programme?.environment === String(environment));
@@ -140,22 +135,28 @@ router.get('/courses', async (req, res) => {
     }
 
     return res.json({ courses: filtered });
-  } catch (err: any) {
-    console.error('Courses fetch error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load courses.' });
   }
 });
 
-router.get('/courses/:id', async (req, res) => {
+router.get('/courses/:id', optionalAuth, async (req: AuthRequest, res) => {
   try {
     await ensureSeeded();
-    const courseId = Number(req.params.id);
-    if (Number.isNaN(courseId)) return res.status(400).json({ error: 'Invalid course ID.' });
+    const courseId = parsePositiveInt(req.params.id);
+    if (!courseId) return res.status(400).json({ error: 'Invalid course ID.' });
 
     const [course] = await db.select().from(courses).where(eq(courses.id, courseId)).limit(1);
     if (!course) return res.status(404).json({ error: 'Course not found.' });
 
     const [programme] = await db.select().from(programmes).where(eq(programmes.id, course.programmeId)).limit(1);
+    const learner = await getOptionalAuthorizedLearner(req);
+    if (learner && !canLearnerAccessCourseEnvironment(learner, programme?.environment)) {
+      return res.status(403).json({
+        error: 'This course is outside the age environment permitted for the active learner profile.',
+      });
+    }
+
     const courseModules = await db
       .select()
       .from(modules)
@@ -173,22 +174,32 @@ router.get('/courses/:id', async (req, res) => {
     }));
 
     return res.json({ course, programme, modules: enrichedModules });
-  } catch (err: any) {
-    console.error('Course detail error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load course details.' });
   }
 });
 
-router.get('/modules/:id', async (req, res) => {
+router.get('/modules/:id', optionalAuth, async (req: AuthRequest, res) => {
   try {
     await ensureSeeded();
-    const moduleId = Number(req.params.id);
-    if (Number.isNaN(moduleId)) return res.status(400).json({ error: 'Invalid module ID.' });
+    const moduleId = parsePositiveInt(req.params.id);
+    if (!moduleId) return res.status(400).json({ error: 'Invalid module ID.' });
 
     const [mod] = await db.select().from(modules).where(eq(modules.id, moduleId)).limit(1);
     if (!mod) return res.status(404).json({ error: 'Module not found.' });
 
     const [course] = await db.select().from(courses).where(eq(courses.id, mod.courseId)).limit(1);
+    const [programme] = course
+      ? await db.select().from(programmes).where(eq(programmes.id, course.programmeId)).limit(1)
+      : [null];
+
+    const learner = await getOptionalAuthorizedLearner(req);
+    if (learner && !canLearnerAccessCourseEnvironment(learner, programme?.environment)) {
+      return res.status(403).json({
+        error: 'This module is outside the age environment permitted for the active learner profile.',
+      });
+    }
+
     const modLessons = await db
       .select()
       .from(lessons)
@@ -196,23 +207,33 @@ router.get('/modules/:id', async (req, res) => {
       .orderBy(asc(lessons.sortOrder));
 
     return res.json({ module: mod, course, lessons: modLessons });
-  } catch (err: any) {
-    console.error('Module detail error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load module.' });
   }
 });
 
-router.get('/lessons/:id', async (req, res) => {
+router.get('/lessons/:id', optionalAuth, async (req: AuthRequest, res) => {
   try {
     await ensureSeeded();
-    const lessonId = Number(req.params.id);
-    if (Number.isNaN(lessonId)) return res.status(400).json({ error: 'Invalid lesson ID.' });
+    const lessonId = parsePositiveInt(req.params.id);
+    if (!lessonId) return res.status(400).json({ error: 'Invalid lesson ID.' });
 
     const [lesson] = await db.select().from(lessons).where(eq(lessons.id, lessonId)).limit(1);
     if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
 
     const [mod] = await db.select().from(modules).where(eq(modules.id, lesson.moduleId)).limit(1);
     const [course] = mod ? await db.select().from(courses).where(eq(courses.id, mod.courseId)).limit(1) : [null];
+    const [programme] = course
+      ? await db.select().from(programmes).where(eq(programmes.id, course.programmeId)).limit(1)
+      : [null];
+
+    const learner = await getOptionalAuthorizedLearner(req);
+    if (learner && !canLearnerAccessCourseEnvironment(learner, programme?.environment)) {
+      return res.status(403).json({
+        error: 'This lesson is outside the age environment permitted for the active learner profile.',
+      });
+    }
+
     const lessonActivities = await db
       .select()
       .from(activities)
@@ -220,25 +241,58 @@ router.get('/lessons/:id', async (req, res) => {
       .orderBy(asc(activities.sortOrder));
 
     return res.json({ lesson, module: mod, course, activities: lessonActivities });
-  } catch (err: any) {
-    console.error('Lesson detail error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load lesson.' });
   }
 });
 
 router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const activityId = Number(req.params.id);
+    const activityId = parsePositiveInt(req.params.id);
+    if (!activityId) return res.status(400).json({ error: 'Invalid activity ID.' });
+
+    const parsed = attemptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid activity answer.' });
+    }
+
     const [activity] = await db.select().from(activities).where(eq(activities.id, activityId)).limit(1);
     if (!activity) return res.status(404).json({ error: 'Activity not found.' });
 
-    const learner = await getLearnerForUser(req.authUser!.id, Number(req.body?.learnerId) || undefined);
-    if (!learner) return res.status(404).json({ error: 'Learner profile not found.' });
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner } = access;
 
-    const answer = req.body?.answer;
+    // Enforce age-tier curriculum boundary on activity attempts
+    const [lessonRow] = await db.select().from(lessons).where(eq(lessons.id, activity.lessonId)).limit(1);
+    const [modRow] = lessonRow
+      ? await db.select().from(modules).where(eq(modules.id, lessonRow.moduleId)).limit(1)
+      : [null];
+    const [courseRow] = modRow
+      ? await db.select().from(courses).where(eq(courses.id, modRow.courseId)).limit(1)
+      : [null];
+    const [progRow] = courseRow
+      ? await db.select().from(programmes).where(eq(programmes.id, courseRow.programmeId)).limit(1)
+      : [null];
+    if (!canLearnerAccessCourseEnvironment(learner, progRow?.environment)) {
+      return res.status(403).json({ error: 'This activity is outside your permitted learning environment.' });
+    }
+
+    const answer = parsed.data.answer;
     const payload = activity.payloadJson as Record<string, any>;
     let isCorrect = false;
     let feedback = '';
+
+    if (['writing', 'conversation_sim', 'role_play'].includes(activity.type)) {
+      let limited = false;
+      aiActivityLimiter(req, res, () => {
+        limited = false;
+      });
+      if (res.headersSent) return;
+      void limited;
+    }
 
     switch (activity.type) {
       case 'multiple_choice':
@@ -287,8 +341,11 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
       }
       case 'word_matching': {
         const pairs = (payload.pairs || []) as { left: string; right: string }[];
-        const userPairs = (answer || {}) as Record<string, string>;
-        const matchedAll = pairs.every((p) => userPairs[p.left] === p.right);
+        const userPairs = (typeof answer === 'object' && !Array.isArray(answer) ? answer : {}) as Record<
+          string,
+          string
+        >;
+        const matchedAll = pairs.length > 0 && pairs.every((p) => userPairs[p.left] === p.right);
         isCorrect = matchedAll;
         feedback = isCorrect
           ? 'All pairs matched accurately!'
@@ -342,87 +399,213 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
 
     const score = isCorrect ? activity.points : Math.round(activity.points * 0.25);
 
-    await db.insert(learningAttempts).values({
-      learnerId: learner.id,
-      lessonId: activity.lessonId,
-      activityId: activity.id,
-      answerJson: { answer },
-      isCorrect,
-      score,
-      feedback,
+    const txResult = await db.transaction(async (tx) => {
+      const priorMastered = await tx
+        .select({ id: learningAttempts.id })
+        .from(learningAttempts)
+        .where(
+          and(
+            eq(learningAttempts.learnerId, learner.id),
+            eq(learningAttempts.activityId, activity.id),
+            eq(learningAttempts.isCorrect, true)
+          )
+        )
+        .limit(1);
+
+      const alreadyMastered = priorMastered.length > 0;
+      const xpAwarded = isCorrect && !alreadyMastered ? activity.points : 0;
+
+      await tx.insert(learningAttempts).values({
+        learnerId: learner.id,
+        lessonId: activity.lessonId,
+        activityId: activity.id,
+        answerJson: { answer },
+        isCorrect,
+        score,
+        xpAwarded,
+        feedback,
+      });
+
+      if (xpAwarded > 0) {
+        await awardXpAtomically(tx, learner.id, xpAwarded);
+      }
+
+      return { xpAwarded, alreadyMastered };
     });
 
-    if (isCorrect) {
-      await db
-        .update(learnerProfiles)
-        .set({ xp: learner.xp + score, updatedAt: new Date() })
-        .where(eq(learnerProfiles.id, learner.id));
-    }
-
-    return res.json({ isCorrect, score, feedback });
-  } catch (err: any) {
-    console.error('Activity attempt error:', err);
+    return res.json({
+      isCorrect,
+      score,
+      xpAwarded: txResult.xpAwarded,
+      alreadyMastered: txResult.alreadyMastered,
+      feedback,
+    });
+  } catch {
     return res.status(500).json({ error: 'Unable to evaluate activity.' });
   }
 });
 
 router.post('/lessons/:id/complete', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const lessonId = Number(req.params.id);
-    const learner = await getLearnerForUser(req.authUser!.id, Number(req.body?.learnerId) || undefined);
-    if (!learner) return res.status(404).json({ error: 'Learner profile not found.' });
+    const lessonId = parsePositiveInt(req.params.id);
+    if (!lessonId) return res.status(400).json({ error: 'Invalid lesson ID.' });
 
-    const score = Number(req.body?.score || 100);
-    const minutesSpent = Number(req.body?.minutesSpent || 10);
+    const parsed = completeLessonSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid completion request.' });
+    }
 
-    await db
-      .insert(learnerProgress)
-      .values({
-        learnerId: learner.id,
-        lessonId,
-        status: 'completed',
-        score,
-        minutesSpent,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [learnerProgress.learnerId, learnerProgress.lessonId],
-        set: {
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner } = access;
+
+    const [lesson] = await db.select().from(lessons).where(eq(lessons.id, lessonId)).limit(1);
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+
+    const [modRow] = await db.select().from(modules).where(eq(modules.id, lesson.moduleId)).limit(1);
+    const [courseRow] = modRow
+      ? await db.select().from(courses).where(eq(courses.id, modRow.courseId)).limit(1)
+      : [null];
+    const [progRow] = courseRow
+      ? await db.select().from(programmes).where(eq(programmes.id, courseRow.programmeId)).limit(1)
+      : [null];
+    if (!canLearnerAccessCourseEnvironment(learner, progRow?.environment)) {
+      return res.status(403).json({ error: 'This lesson is outside your permitted learning environment.' });
+    }
+
+    const lessonActivities = await db
+      .select()
+      .from(activities)
+      .where(eq(activities.lessonId, lesson.id));
+
+    const learnerAttempts = await db
+      .select()
+      .from(learningAttempts)
+      .where(
+        and(eq(learningAttempts.learnerId, learner.id), eq(learningAttempts.lessonId, lesson.id))
+      );
+
+    // Server-side verification: every lesson activity must have at least one real recorded attempt.
+    if (lessonActivities.length > 0) {
+      const attemptedIds = new Set(
+        learnerAttempts.map((a) => a.activityId).filter((id): id is number => id !== null)
+      );
+      const missingActivityIds = lessonActivities
+        .filter((act) => !attemptedIds.has(act.id))
+        .map((act) => act.id);
+
+      if (missingActivityIds.length > 0) {
+        return res.status(400).json({
+          error: 'Please attempt all activities in this lesson before marking it complete.',
+          missingActivityIds,
+        });
+      }
+    }
+
+    // Compute score server-side from actual best recorded attempts per activity.
+    let serverScore = 100;
+    if (lessonActivities.length > 0) {
+      const bestScoreByActivity = new Map<number, number>();
+      for (const att of learnerAttempts) {
+        if (!att.activityId) continue;
+        const prev = bestScoreByActivity.get(att.activityId) ?? 0;
+        if (att.score > prev) bestScoreByActivity.set(att.activityId, att.score);
+      }
+      const totalPossible = lessonActivities.reduce((sum, a) => sum + Math.max(1, a.points), 0);
+      const totalBest = lessonActivities.reduce(
+        (sum, a) => sum + Math.min(a.points, bestScoreByActivity.get(a.id) ?? 0),
+        0
+      );
+      serverScore = Math.max(0, Math.min(100, Math.round((totalBest / totalPossible) * 100)));
+    }
+
+    const maxReasonableMinutes = Math.max(lesson.durationMinutes * 3, 60);
+    const minutesSpent = Math.min(
+      maxReasonableMinutes,
+      Math.max(1, Math.round(parsed.data.minutesSpent ?? lesson.durationMinutes))
+    );
+
+    const completionResult = await db.transaction(async (tx) => {
+      const [freshLearner] = await tx
+        .select()
+        .from(learnerProfiles)
+        .where(eq(learnerProfiles.id, learner.id))
+        .limit(1);
+
+      const [existingProgress] = await tx
+        .select()
+        .from(learnerProgress)
+        .where(
+          and(eq(learnerProgress.learnerId, learner.id), eq(learnerProgress.lessonId, lesson.id))
+        )
+        .limit(1);
+
+      const alreadyAwardedLessonXp = (existingProgress?.xpAwarded ?? 0) > 0;
+      const xpEarned = alreadyAwardedLessonXp ? 0 : 40;
+      const finalXpAwarded = alreadyAwardedLessonXp ? existingProgress!.xpAwarded : xpEarned;
+
+      await tx
+        .insert(learnerProgress)
+        .values({
+          learnerId: learner.id,
+          lessonId: lesson.id,
           status: 'completed',
-          score,
+          score: serverScore,
+          xpAwarded: finalXpAwarded,
           minutesSpent,
           completedAt: new Date(),
           updatedAt: new Date(),
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: [learnerProgress.learnerId, learnerProgress.lessonId],
+          set: {
+            status: 'completed',
+            score: serverScore,
+            xpAwarded: finalXpAwarded,
+            minutesSpent,
+            completedAt: existingProgress?.completedAt ?? new Date(),
+            updatedAt: new Date(),
+          },
+        });
 
-    const today = new Date().toISOString().slice(0, 10);
-    let newStreak = learner.streakDays;
-    if (learner.lastPracticeDate !== today) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      newStreak = learner.lastPracticeDate === yesterday ? learner.streakDays + 1 : 1;
-    }
+      const today = new Date().toISOString().slice(0, 10);
+      let newStreak = freshLearner?.streakDays ?? learner.streakDays;
+      if (freshLearner?.lastPracticeDate !== today) {
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        newStreak =
+          freshLearner?.lastPracticeDate === yesterday ? (freshLearner?.streakDays || 0) + 1 : 1;
+      }
 
-    await db
-      .update(learnerProfiles)
-      .set({
-        xp: learner.xp + 40,
+      await tx
+        .update(learnerProfiles)
+        .set({
+          xp: sql`${learnerProfiles.xp} + ${xpEarned}`,
+          streakDays: newStreak,
+          lastPracticeDate: today,
+          updatedAt: new Date(),
+        })
+        .where(eq(learnerProfiles.id, learner.id));
+
+      const newlyEarned = await checkAndAwardAchievements(tx, learner.id);
+      return {
+        xpEarned,
+        alreadyCompleted: alreadyAwardedLessonXp,
         streakDays: newStreak,
-        lastPracticeDate: today,
-        updatedAt: new Date(),
-      })
-      .where(eq(learnerProfiles.id, learner.id));
+        newlyEarned,
+      };
+    });
 
-    const newlyEarned = await checkAndAwardAchievements(learner.id);
     return res.json({
       completed: true,
-      xpEarned: 40,
-      streakDays: newStreak,
-      newlyEarnedAchievements: newlyEarned,
+      score: serverScore,
+      xpEarned: completionResult.xpEarned,
+      alreadyCompleted: completionResult.alreadyCompleted,
+      streakDays: completionResult.streakDays,
+      newlyEarnedAchievements: completionResult.newlyEarned,
     });
-  } catch (err: any) {
-    console.error('Lesson completion error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to save lesson completion.' });
   }
 });
@@ -430,10 +613,18 @@ router.post('/lessons/:id/complete', requireAuth, async (req: AuthRequest, res) 
 router.get('/dashboard', requireAuth, async (req: AuthRequest, res) => {
   try {
     await ensureSeeded();
-    const learner = await getLearnerForUser(req.authUser!.id, Number(req.query.learnerId) || undefined);
-    if (!learner) {
-      return res.json({ learner: null, courses: [], progress: [], achievements: [], recentActivity: [] });
+    const access = await resolveAuthorizedLearner(req.authUser!, req.query.learnerId);
+    if (!access.ok) {
+      const hasRequestedId =
+        req.query.learnerId !== undefined &&
+        req.query.learnerId !== null &&
+        req.query.learnerId !== '';
+      if (!hasRequestedId && access.status === 404) {
+        return res.json({ learner: null, courses: [], progress: [], achievements: [], recentActivity: [] });
+      }
+      return res.status(access.status).json({ error: access.error });
     }
+    const { learner, parent } = access;
 
     const allProgrammes = await db.select().from(programmes);
     const allCourses = await db.select().from(courses).orderBy(asc(courses.sortOrder));
@@ -445,7 +636,13 @@ router.get('/dashboard', requireAuth, async (req: AuthRequest, res) => {
       .filter((c) => progById.get(c.programmeId)?.environment === learner.environment)
       .map((c) => ({ ...c, programme: progById.get(c.programmeId) }));
 
-    const recommendedCourses = matchingCourses.length > 0 ? matchingCourses : allCourses.slice(0, 3);
+    const recommendedCourses =
+      matchingCourses.length > 0
+        ? matchingCourses
+        : allCourses
+            .filter((c) => canLearnerAccessCourseEnvironment(learner, progById.get(c.programmeId)?.environment))
+            .map((c) => ({ ...c, programme: progById.get(c.programmeId) }))
+            .slice(0, 3);
 
     const progressRows = await db
       .select()
@@ -464,12 +661,17 @@ router.get('/dashboard', requireAuth, async (req: AuthRequest, res) => {
     const allAchievements = await db.select().from(achievements);
     const earnedSet = new Set(earned.map((e) => e.achievementId));
 
-    const voiceHistory = await db
+    const allowTranscripts = shouldStoreTranscripts(learner, parent);
+    const voiceHistoryRaw = await db
       .select()
       .from(voicePracticeSessions)
       .where(eq(voicePracticeSessions.learnerId, learner.id))
       .orderBy(desc(voicePracticeSessions.createdAt))
       .limit(5);
+
+    const voiceHistory = allowTranscripts
+      ? voiceHistoryRaw
+      : voiceHistoryRaw.map((v) => ({ ...v, transcript: null }));
 
     const [goal] = await db
       .select()
@@ -502,16 +704,26 @@ router.get('/dashboard', requireAuth, async (req: AuthRequest, res) => {
       })),
       recentVoiceSessions: voiceHistory,
     });
-  } catch (err: any) {
-    console.error('Dashboard fetch error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load learning dashboard.' });
   }
 });
 
 router.get('/history', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const learner = await getLearnerForUser(req.authUser!.id);
-    if (!learner) return res.json({ attempts: [], progress: [], voiceSessions: [], conversations: [] });
+    const access = await resolveAuthorizedLearner(req.authUser!, req.query.learnerId);
+    if (!access.ok) {
+      const hasRequestedId =
+        req.query.learnerId !== undefined &&
+        req.query.learnerId !== null &&
+        req.query.learnerId !== '';
+      if (!hasRequestedId && access.status === 404) {
+        return res.json({ attempts: [], progress: [], voiceSessions: [], conversations: [] });
+      }
+      return res.status(access.status).json({ error: access.error });
+    }
+    const { learner, parent } = access;
+    const allowTranscripts = shouldStoreTranscripts(learner, parent);
 
     const attempts = await db
       .select()
@@ -526,56 +738,79 @@ router.get('/history', requireAuth, async (req: AuthRequest, res) => {
       .where(eq(learnerProgress.learnerId, learner.id))
       .orderBy(desc(learnerProgress.updatedAt));
 
-    const voiceSessions = await db
+    const voiceSessionsRaw = await db
       .select()
       .from(voicePracticeSessions)
       .where(eq(voicePracticeSessions.learnerId, learner.id))
       .orderBy(desc(voicePracticeSessions.createdAt))
       .limit(20);
 
-    const conversations = await db
+    const conversationsRaw = await db
       .select()
       .from(conversationSessions)
       .where(eq(conversationSessions.learnerId, learner.id))
       .orderBy(desc(conversationSessions.createdAt))
       .limit(20);
 
-    return res.json({ attempts, progress, voiceSessions, conversations });
-  } catch (err: any) {
-    console.error('History fetch error:', err);
+    return res.json({
+      attempts,
+      progress,
+      voiceSessions: allowTranscripts
+        ? voiceSessionsRaw
+        : voiceSessionsRaw.map((v) => ({ ...v, transcript: null })),
+      conversations: allowTranscripts
+        ? conversationsRaw
+        : conversationsRaw.map((c) => ({ ...c, transcriptJson: [] })),
+    });
+  } catch {
     return res.status(500).json({ error: 'Unable to load learning history.' });
   }
 });
 
 router.patch('/settings', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const learner = await getLearnerForUser(req.authUser!.id);
-    if (!learner) return res.status(404).json({ error: 'Learner profile not found.' });
+    const parsed = settingsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid learner settings.' });
+    }
 
-    const {
-      displayName,
-      environment,
-      cefrLevel,
-      dailyGoalMinutes,
-      voicePreferences,
-    } = req.body || {};
+    const access = await resolveAuthorizedLearner(req.authUser!, parsed.data.learnerId, {
+      requireGuardianConsentForChild: true,
+    });
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { learner, isParentActingForChild } = access;
+
+    let nextEnvironment = learner.environment;
+    let nextAgeRange = learner.ageRange;
+
+    if (parsed.data.environment && parsed.data.environment !== learner.environment) {
+      const transition = validateEnvironmentTransition(learner, parsed.data.environment, {
+        isParentActingForChild,
+        isAdmin: req.authUser!.role === 'ADMIN',
+      });
+      if (!transition.allowed) {
+        return res.status(403).json({ error: transition.error });
+      }
+      nextEnvironment = parsed.data.environment;
+      nextAgeRange = defaultAgeRangeForEnvironment(nextEnvironment);
+    }
 
     const [updated] = await db
       .update(learnerProfiles)
       .set({
-        displayName: displayName || learner.displayName,
-        environment: environment || learner.environment,
-        cefrLevel: cefrLevel || learner.cefrLevel,
-        dailyGoalMinutes: dailyGoalMinutes ? Number(dailyGoalMinutes) : learner.dailyGoalMinutes,
-        voicePreferences: voicePreferences || learner.voicePreferences,
+        displayName: parsed.data.displayName || learner.displayName,
+        environment: nextEnvironment,
+        ageRange: nextAgeRange,
+        cefrLevel: parsed.data.cefrLevel || learner.cefrLevel,
+        dailyGoalMinutes: parsed.data.dailyGoalMinutes ?? learner.dailyGoalMinutes,
+        voicePreferences: parsed.data.voicePreferences || learner.voicePreferences,
         updatedAt: new Date(),
       })
       .where(eq(learnerProfiles.id, learner.id))
       .returning();
 
     return res.json({ learnerProfile: updated });
-  } catch (err: any) {
-    console.error('Settings update error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to update learner settings.' });
   }
 });

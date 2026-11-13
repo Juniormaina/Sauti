@@ -4,8 +4,11 @@ import { ArrowLeft, ArrowRight, BookOpen, Clock } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { Course, ModuleWithLessons, Programme } from '../../types/sauti';
 
+import { useAuthStore } from '../../stores/authStore';
+
 export function CourseDetailPage() {
   const { id } = useParams();
+  const { activeChildId } = useAuthStore();
   const [data, setData] = useState<{
     course: Course;
     programme: Programme | null;
@@ -14,10 +17,11 @@ export function CourseDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch<any>(`/api/learning/courses/${id}`)
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/courses/${id}${qs}`)
       .then(setData)
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, activeChildId]);
 
   if (loading) {
     return <div className="h-64 rounded-3xl bg-[#245C45]/10 animate-pulse" />;
@@ -95,11 +99,13 @@ export function CourseDetailPage() {
 
 export function ModuleDetailPage() {
   const { id } = useParams();
+  const { activeChildId } = useAuthStore();
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
-    apiFetch<any>(`/api/learning/modules/${id}`).then(setData);
-  }, [id]);
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/modules/${id}${qs}`).then(setData);
+  }, [id, activeChildId]);
 
   if (!data) return <div className="h-48 rounded-2xl bg-[#245C45]/10 animate-pulse" />;
 

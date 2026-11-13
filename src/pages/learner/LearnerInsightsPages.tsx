@@ -6,15 +6,17 @@ import { ENVIRONMENTS } from '../../utils/environments';
 import { CefrLevel, LearningEnvironment } from '../../types/sauti';
 
 export function LearnerAchievementsPage() {
+  const { activeChildId } = useAuthStore();
   const [achievements, setAchievements] = useState<any[]>([]);
   const [xp, setXp] = useState(0);
 
   useEffect(() => {
-    apiFetch<any>('/api/learning/dashboard').then((res) => {
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/dashboard${qs}`).then((res) => {
       setAchievements(res.achievements || []);
       setXp(res.learner?.xp || 0);
     });
-  }, []);
+  }, [activeChildId]);
 
   return (
     <div className="space-y-6">
@@ -48,11 +50,13 @@ export function LearnerAchievementsPage() {
 }
 
 export function LearnerProgressPage() {
+  const { activeChildId } = useAuthStore();
   const [dashboard, setDashboard] = useState<any>(null);
 
   useEffect(() => {
-    apiFetch<any>('/api/learning/dashboard').then(setDashboard);
-  }, []);
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/dashboard${qs}`).then(setDashboard);
+  }, [activeChildId]);
 
   if (!dashboard) return <div className="h-48 rounded-2xl bg-[#245C45]/10 animate-pulse" />;
 
@@ -95,11 +99,13 @@ export function LearnerProgressPage() {
 }
 
 export function LearnerHistoryPage() {
+  const { activeChildId } = useAuthStore();
   const [history, setHistory] = useState<any>(null);
 
   useEffect(() => {
-    apiFetch<any>('/api/learning/history').then(setHistory);
-  }, []);
+    const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
+    apiFetch<any>(`/api/learning/history${qs}`).then(setHistory);
+  }, [activeChildId]);
 
   if (!history) return <div className="h-48 rounded-2xl bg-[#245C45]/10 animate-pulse" />;
 
@@ -124,7 +130,7 @@ export function LearnerHistoryPage() {
 }
 
 export function LearnerProfileSettingsPage() {
-  const { user, learnerProfile, setLearnerProfile } = useAuthStore();
+  const { user, learnerProfile, activeChildId, setLearnerProfile } = useAuthStore();
   const [displayName, setDisplayName] = useState(learnerProfile?.displayName || '');
   const [environment, setEnvironment] = useState<LearningEnvironment>(
     learnerProfile?.environment || 'young_adults'
@@ -132,16 +138,28 @@ export function LearnerProfileSettingsPage() {
   const [cefrLevel, setCefrLevel] = useState<CefrLevel>(learnerProfile?.cefrLevel || 'A1');
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState(learnerProfile?.dailyGoalMinutes || 15);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavedMsg(null);
-    const res = await apiFetch<{ learnerProfile: any }>('/api/learning/settings', {
-      method: 'PATCH',
-      body: JSON.stringify({ displayName, environment, cefrLevel, dailyGoalMinutes }),
-    });
-    setLearnerProfile(res.learnerProfile);
-    setSavedMsg('Preferences saved and applied across your workspace.');
+    setErrMsg(null);
+    try {
+      const res = await apiFetch<{ learnerProfile: any }>('/api/learning/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          learnerId: activeChildId || undefined,
+          displayName,
+          environment,
+          cefrLevel,
+          dailyGoalMinutes,
+        }),
+      });
+      setLearnerProfile(res.learnerProfile);
+      setSavedMsg('Preferences saved and applied across your workspace.');
+    } catch (err: any) {
+      setErrMsg(err.message || 'Unable to update learner settings.');
+    }
   };
 
   return (
@@ -151,6 +169,11 @@ export function LearnerProfileSettingsPage() {
         <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-4 text-sm flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-[#245C45]" />
           <span>{savedMsg}</span>
+        </div>
+      )}
+      {errMsg && (
+        <div className="rounded-xl bg-[#F28B75]/15 border border-[#F28B75] p-4 text-sm text-[#B43C25]">
+          {errMsg}
         </div>
       )}
       <form onSubmit={handleSave} className="rounded-3xl bg-white border border-[#245C45]/12 p-7 space-y-5">

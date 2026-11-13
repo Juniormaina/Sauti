@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../src/db/index.ts';
 import {
@@ -13,6 +13,11 @@ import {
   users,
 } from '../../src/db/schema.ts';
 import { AuthRequest, requireAuth, requireRole } from '../middleware/auth.ts';
+import { resolveAuthorizedClassroom } from '../services/authorizationService.ts';
+import {
+  defaultAgeRangeForEnvironment,
+  UNDER_13_ENVIRONMENTS,
+} from '../services/childSafetyService.ts';
 
 const router = Router();
 router.use(requireAuth, requireRole('TEACHER', 'ADMIN'));
@@ -53,14 +58,13 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
 
     const allCourses = await db.select().from(courses);
     return res.json({ teacher, classrooms: enriched, availableCourses: allCourses });
-  } catch (err: any) {
-    console.error('Teacher dashboard error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load teacher dashboard.' });
   }
 });
 
 const classroomSchema = z.object({
-  name: z.string().min(2),
+  name: z.string().trim().min(2).max(100),
   environment: z.enum([
     'little_voices',
     'young_explorers',
@@ -93,22 +97,16 @@ router.post('/classrooms', async (req: AuthRequest, res) => {
       .returning();
 
     return res.status(201).json({ classroom: created });
-  } catch (err: any) {
-    console.error('Create classroom error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to create classroom.' });
   }
 });
 
 router.get('/classrooms/:id', async (req: AuthRequest, res) => {
   try {
-    const classroomId = Number(req.params.id);
-    const [classroom] = await db
-      .select()
-      .from(classrooms)
-      .where(eq(classrooms.id, classroomId))
-      .limit(1);
-
-    if (!classroom) return res.status(404).json({ error: 'Classroom not found.' });
+    const access = await resolveAuthorizedClassroom(req.authUser!, req.params.id);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { classroom } = access;
 
     const memberships = await db
       .select()
@@ -135,23 +133,39 @@ router.get('/classrooms/:id', async (req: AuthRequest, res) => {
     );
 
     return res.json({ classroom, learners });
-  } catch (err: any) {
-    console.error('Classroom detail error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to load classroom.' });
   }
 });
 
+const addLearnerSchema = z
+  .object({
+    email: z.string().trim().email().optional(),
+    displayName: z.string().trim().min(2).max(80).optional(),
+  })
+  .refine((d) => Boolean(d.email || d.displayName), {
+    message: 'Provide an existing learner email or a learner display name.',
+  });
+
 router.post('/classrooms/:id/learners', async (req: AuthRequest, res) => {
   try {
-    const classroomId = Number(req.params.id);
-    const { email, displayName } = req.body || {};
+    const access = await resolveAuthorizedClassroom(req.authUser!, req.params.id);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    const { classroom } = access;
 
-    let learner: any = null;
+    const parsed = addLearnerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid learner input.' });
+    }
+
+    const { email, displayName } = parsed.data;
+    let learner: typeof learnerProfiles.$inferSelect | null = null;
+
     if (email) {
       const [user] = await db
         .select()
         .from(users)
-        .where(eq(users.email, String(email).toLowerCase().trim()))
+        .where(eq(users.email, email.toLowerCase().trim()))
         .limit(1);
       if (user) {
         const [lp] = await db
@@ -159,18 +173,24 @@ router.post('/classrooms/:id/learners', async (req: AuthRequest, res) => {
           .from(learnerProfiles)
           .where(eq(learnerProfiles.userId, user.id))
           .limit(1);
-        learner = lp;
+        learner = lp || null;
       }
     }
 
     if (!learner && displayName) {
-      const [cls] = await db.select().from(classrooms).where(eq(classrooms.id, classroomId)).limit(1);
+      if (UNDER_13_ENVIRONMENTS.has(classroom.environment)) {
+        return res.status(400).json({
+          error:
+            'Under-13 learners require guardian registration and consent before joining a classroom by account email.',
+        });
+      }
       const [created] = await db
         .insert(learnerProfiles)
         .values({
-          displayName: String(displayName),
-          environment: cls?.environment || 'teen_voices',
-          cefrLevel: cls?.cefrLevel || 'A2',
+          displayName,
+          ageRange: defaultAgeRangeForEnvironment(classroom.environment),
+          environment: classroom.environment,
+          cefrLevel: classroom.cefrLevel,
           onboardingCompleted: true,
         })
         .returning();
@@ -178,20 +198,34 @@ router.post('/classrooms/:id/learners', async (req: AuthRequest, res) => {
     }
 
     if (!learner) {
-      return res.status(404).json({ error: 'Provide an existing learner email or a learner display name.' });
+      return res.status(404).json({ error: 'No learner profile matched that email.' });
+    }
+
+    const [existingMembership] = await db
+      .select()
+      .from(classroomMemberships)
+      .where(
+        and(
+          eq(classroomMemberships.classroomId, classroom.id),
+          eq(classroomMemberships.learnerId, learner.id)
+        )
+      )
+      .limit(1);
+
+    if (existingMembership) {
+      return res.status(409).json({ error: 'This learner is already enrolled in the classroom.' });
     }
 
     const [membership] = await db
       .insert(classroomMemberships)
       .values({
-        classroomId,
+        classroomId: classroom.id,
         learnerId: learner.id,
       })
       .returning();
 
     return res.status(201).json({ membership, learner });
-  } catch (err: any) {
-    console.error('Add learner to classroom error:', err);
+  } catch {
     return res.status(500).json({ error: 'Unable to add learner to classroom.' });
   }
 });

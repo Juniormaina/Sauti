@@ -55,7 +55,7 @@ export function RegisterPage() {
         ? initialAccountType
         : 'individual',
       environment: ENVIRONMENTS.some((e) => e.id === initialEnv) ? initialEnv : 'young_adults',
-      parentConsentAccepted: initialAccountType === 'parent',
+      parentConsentAccepted: false,
     },
   });
 
@@ -74,9 +74,9 @@ export function RegisterPage() {
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null);
-    if (isChildEnvironment && values.accountType === 'individual' && !values.parentConsentAccepted) {
+    if (isChildEnvironment && values.accountType === 'individual') {
       setServerError(
-        'Learners in Little Voices or Young Explorers require parent or guardian consent.'
+        'Learners under 13 cannot self-register as individual accounts. Please select Parent / Guardian above to create a family-managed profile.'
       );
       return;
     }

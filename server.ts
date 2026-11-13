@@ -3,32 +3,12 @@ import path from 'node:path';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { env } from './server/config/env.ts';
-import authRoutes from './server/routes/auth.ts';
-import learningRoutes from './server/routes/learning.ts';
-import voiceRoutes from './server/routes/voice.ts';
-import parentRoutes from './server/routes/parent.ts';
-import teacherRoutes from './server/routes/teacher.ts';
-import adminRoutes from './server/routes/admin.ts';
+import { createSautiApp } from './server/app.ts';
 import { attachLiveVoiceWebSocket } from './server/ws/liveVoiceServer.ts';
 
 async function startServer() {
-  const app = express();
+  const app = createSautiApp();
   const server = http.createServer(app);
-
-  app.use(express.json({ limit: '15mb' }));
-
-  // Health endpoint
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'sauti-api' });
-  });
-
-  // REST API routes
-  app.use('/api/auth', authRoutes);
-  app.use('/api/learning', learningRoutes);
-  app.use('/api/voice', voiceRoutes);
-  app.use('/api/parent', parentRoutes);
-  app.use('/api/teacher', teacherRoutes);
-  app.use('/api/admin', adminRoutes);
 
   // WebSocket bridge for Gemini Live API
   attachLiveVoiceWebSocket(server);
@@ -53,6 +33,6 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
-  console.error('Failed to start SAUTI server:', err);
+  console.error('Failed to start SAUTI server:', err instanceof Error ? err.message : 'startup_error');
   process.exit(1);
 });
