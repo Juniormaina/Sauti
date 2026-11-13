@@ -1,0 +1,1033 @@
+# SAUTI — Complete Product Generation Master Prompt
+
+## 1. YOUR ROLE
+
+Act as a senior product designer, UX architect, full-stack software engineer, AI engineer and technical lead.
+
+Your task is to design and build **SAUTI**, a complete, modern, voice-first English learning platform.
+
+Do not build just a landing page, a dashboard mockup or a static prototype. Build a coherent, functional application with real navigation, learning activities, learner journeys, voice interactions, progress tracking and a maintainable backend architecture.
+
+Think like a team building a serious EdTech product intended for real learners, parents, teachers and institutions.
+
+Make thoughtful product decisions independently. Do not stop to ask me about minor design or implementation decisions.
+
+---
+
+# 2. PRODUCT IDENTITY
+
+**Product name:** SAUTI
+
+**Primary tagline:**
+"Don't just learn English. Find your voice."
+
+**Secondary tagline:**
+"Speak with confidence. Learn at your own pace."
+
+**Product vision:**
+
+SAUTI helps people of all ages learn, practise and confidently communicate in English through interactive lessons, personalised learning journeys, engaging activities and AI-powered spoken conversations.
+
+The platform should make English learning accessible, enjoyable, practical and confidence-building.
+
+SAUTI should not feel like a traditional school learning management system. It should feel like a beautifully designed, interactive learning companion that adapts to the learner.
+
+The experience must work for:
+- Young children learning their first English sounds and words.
+- School-age children developing vocabulary and communication.
+- Teenagers building fluency and confidence.
+- University students and young adults.
+- Working professionals improving workplace communication.
+- Older adults learning or improving their English at their own pace.
+
+**Important product principle:** Age does not automatically determine English proficiency. Every age group must have beginner, intermediate and advanced learning pathways.
+
+Use CEFR proficiency levels:
+- A1 — Beginner
+- A2 — Elementary
+- B1 — Intermediate
+- B2 — Upper Intermediate
+- C1 — Advanced
+- C2 — Proficient
+
+---
+
+# 3. TECHNOLOGY REQUIREMENTS
+
+Build using the following stack:
+
+### Frontend
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS v4
+- React Router
+- Motion for React for animations
+- Lucide React for icons
+- Zustand for application state
+- React Hook Form and Zod for form validation
+
+### Backend
+- Node.js
+- Express
+- TypeScript
+- PostgreSQL
+- Prisma ORM
+- REST API architecture
+
+### AI and voice
+Use Google's currently supported Gemini APIs and verify current API documentation before implementing integrations.
+
+The architecture should support:
+- Gemini Live API for real-time spoken conversations.
+- Gemini TTS for generated speech.
+- Gemini speech transcription capabilities for converting learner speech into text.
+- Server-side AI services for feedback, explanations and personalised learning assistance.
+
+Keep model names configurable. Do not hardcode outdated model identifiers.
+
+### General engineering requirements
+- Use reusable components and modular feature-based architecture.
+- Keep frontend and backend responsibilities separate.
+- Use environment variables for credentials and configuration.
+- Never expose Gemini API keys, database credentials or secrets in frontend code.
+- Implement proper loading, empty, error and success states.
+- Use typed API responses and shared TypeScript types where practical.
+- Keep demo data separate from real API services.
+- Avoid unnecessary dependencies.
+- Ensure the application is responsive and accessible.
+- Include a README with installation and setup instructions.
+
+**Do not switch to Next.js. React + Vite is mandatory.**
+
+---
+
+# 4. VISUAL DESIGN AND BRAND IDENTITY
+
+SAUTI must have an exceptional visual identity.
+
+Use https://stash.cool/ as visual inspiration for quality, visual polish, composition, typography, animation and interaction. Do not copy its assets, branding or exact layouts.
+
+### Shared brand palette
+
+- Warm cream: `#FFF8ED`
+- Forest green: `#245C45`
+- Coral: `#F28B75`
+- Sky blue: `#A9D9E8`
+- Soft yellow: `#F6C96B`
+
+Use these as the foundation while allowing age-specific interfaces to introduce complementary colours.
+
+### Design direction
+
+The interface should feature:
+- Expressive editorial typography.
+- Beautiful visual hierarchy.
+- Rounded cards and thoughtfully designed panels.
+- Generous whitespace.
+- Soft gradients and subtle depth.
+- Layered illustrations.
+- High-quality icons.
+- Carefully composed responsive layouts.
+- Beautiful empty states and progress visualisations.
+- Smooth transitions and meaningful micro-interactions.
+
+Avoid:
+- Generic AI-generated dashboard layouts.
+- Excessive gradients.
+- Overcrowded cards.
+- Tiny text.
+- Unnecessary decorative elements.
+- Inconsistent spacing.
+- Childish visual treatment of adult learners.
+
+### Age-specific visual experiences
+
+Create distinct interfaces sharing the same underlying learning engine.
+
+**Little Voices (ages 3–5)**
+- Playful and colourful.
+- Friendly illustrated characters.
+- Large buttons and touch targets.
+- Picture-led activities.
+- Minimal reading requirements.
+- Audio-led learning.
+
+**Young Explorers (ages 6–10)**
+- Colourful and adventurous.
+- Interactive illustrations.
+- Games, stories and learning challenges.
+- Rewarding progress experiences.
+
+**Teen Voices (ages 11–17)**
+- Contemporary, expressive and energetic.
+- Modern typography.
+- More sophisticated layouts.
+- Social confidence and creative communication themes.
+- Avoid overly childish graphics.
+
+**Young Adults (ages 18–25)**
+- Modern, confident and clean.
+- Academic, social and everyday communication.
+- Practical learning experiences.
+
+**Professional English (ages 26–45)**
+- Refined, editorial and professional.
+- Workplace communication.
+- Presentations, interviews and business English.
+
+**Lifelong English (ages 46+)**
+- Calm, welcoming and accessible.
+- Readable typography.
+- Clear navigation.
+- Practical real-world communication.
+
+Use shared design tokens and components so that each environment feels like SAUTI without looking identical.
+
+### Animation
+
+Use Motion for React for:
+- Page transitions.
+- Navigation interactions.
+- Card entrances.
+- Progress animations.
+- Learning feedback.
+- Character interactions.
+- Voice recording states.
+- Conversation transitions.
+- Hover and tap feedback.
+
+Use animations purposefully. Respect reduced-motion preferences and avoid excessive effects that compromise low-end mobile devices.
+
+---
+
+# 5. PUBLIC WEBSITE
+
+Build two distinct public-facing pages.
+
+## Page A: Main homepage `/`
+
+This is SAUTI's primary marketing homepage.
+
+Include:
+
+1. Animated navigation bar.
+2. Hero section with the headline:
+
+   "Don't just learn English. Find your voice."
+
+3. Supporting message explaining that SAUTI helps learners of all ages develop English skills and confidence.
+4. Primary CTA: "Start learning".
+5. Secondary CTA: "Explore SAUTI".
+6. Beautiful illustrations or character artwork.
+7. Introduction to SAUTI.
+8. How SAUTI works.
+9. Age-specific learning experiences.
+10. Interactive lesson preview.
+11. Voice Studio demonstration.
+12. Listening and speaking features.
+13. AI conversation experience.
+14. Learning progress and achievements.
+15. Parent and school section.
+16. Testimonials using clearly identified sample content until genuine testimonials exist.
+17. Pricing preview with clearly labelled example plans if actual pricing has not been configured.
+18. Frequently asked questions.
+19. Footer with navigation, contact and social links.
+
+The homepage must communicate that speaking and listening are central to SAUTI, not secondary features.
+
+## Page B: Learning journey selection `/get-started`
+
+Create a separate, beautifully designed journey-selection page.
+
+Display six learning environments:
+
+- Little Voices — ages 3–5.
+- Young Explorers — ages 6–10.
+- Teen Voices — ages 11–17.
+- Young Adults — ages 18–25.
+- Professional English — ages 26–45.
+- Lifelong English — ages 46+.
+
+Each card should have:
+- Its own visual identity.
+- Age range.
+- Short description.
+- Appropriate illustration.
+- Clear CTA.
+
+Include separate entry points for:
+- Parents registering children.
+- Individual learners.
+- Teachers.
+- Schools and institutions.
+
+Selecting a journey should take the user into the correct registration and onboarding flow.
+
+---
+
+# 6. AUTHENTICATION AND ONBOARDING
+
+Create the following pages:
+
+- `/register`
+- `/login`
+- `/forgot-password`
+- `/onboarding`
+- `/onboarding/profile`
+- `/onboarding/assessment`
+- `/onboarding/goals`
+
+Registration should support:
+- Individual learners.
+- Parent or guardian accounts.
+- Teachers.
+- Institution accounts.
+
+Include:
+- Email and password registration.
+- Login.
+- Password reset flow.
+- Form validation.
+- Clear authentication feedback.
+
+Do not pretend authentication is secure or production-ready if the backend is not actually connected.
+
+Use secure password hashing, appropriate session or token handling, server-side validation and protected routes.
+
+### Learner onboarding
+
+Collect:
+- Display name.
+- Age or age range.
+- Selected learning environment.
+- English proficiency level or placement assessment.
+- Learning goals.
+- Preferred learning activities.
+- Preferred practice duration.
+- Relevant learning preferences.
+
+Create a short placement assessment that helps estimate the learner's starting level.
+
+Do not assume that the learner is a beginner.
+
+For children, use parent or guardian consent and appropriate registration flows.
+
+---
+
+# 7. LEARNER EXPERIENCE
+
+Each learner must enter an interface designed for their age group.
+
+Create separate application layouts:
+
+- `KidsLayout`
+- `TeenLayout`
+- `AdultLayout`
+
+The underlying learning engine must be shared.
+
+### Learner routes
+
+Implement:
+
+- `/learn/dashboard`
+- `/learn/courses`
+- `/learn/courses/:id`
+- `/learn/modules/:id`
+- `/learn/lessons/:id`
+- `/learn/speaking`
+- `/learn/listening`
+- `/learn/reading`
+- `/learn/writing`
+- `/learn/vocabulary`
+- `/learn/grammar`
+- `/learn/challenges`
+- `/learn/achievements`
+- `/learn/progress`
+- `/learn/history`
+- `/learn/profile`
+- `/learn/settings`
+
+### Dashboard
+
+The dashboard should show:
+- Personalised welcome message.
+- Current learning level.
+- Continue learning section.
+- Daily learning activity.
+- Recommended lessons.
+- Speaking practice shortcut.
+- Listening practice shortcut.
+- Weekly learning progress.
+- Learning streak.
+- Achievements.
+- Recent activity.
+- Personalised learning recommendations.
+
+Use meaningful data and functional interactions.
+
+### Learning library
+
+Provide categories such as:
+- Everyday English.
+- Vocabulary.
+- Pronunciation.
+- Listening.
+- Speaking.
+- Grammar.
+- Reading.
+- Writing.
+- Academic English.
+- Workplace English.
+- Conversation skills.
+
+Allow learners to filter by:
+- Learning level.
+- Topic.
+- Skill.
+- Duration.
+
+### Learning engine
+
+Use the following hierarchy:
+
+Programme → Course → Module → Lesson → Activity → Assessment → Progress.
+
+Each lesson should have:
+- Learning objective.
+- Introduction.
+- Learning content.
+- Activities.
+- Audio where appropriate.
+- Practice.
+- Feedback.
+- Completion state.
+
+Activities should support:
+
+1. Multiple choice.
+2. Word matching.
+3. Picture recognition.
+4. Sentence building.
+5. Fill in the blanks.
+6. Listen and select.
+7. Listen and repeat.
+8. Read aloud.
+9. Voice recording.
+10. Conversation simulation.
+11. Spelling.
+12. Writing exercises.
+13. Story comprehension.
+14. Grammar correction.
+15. Role-play.
+
+Make activities interactive and genuinely usable.
+
+Do not make every activity a multiple-choice quiz.
+
+---
+
+# 8. VOICE STUDIO — A CORE PRODUCT FEATURE
+
+This is one of the most important parts of SAUTI.
+
+**Voice functionality must be central to the product experience. Do not treat the microphone as an optional decorative feature.**
+
+Create a dedicated Voice Studio with a polished, immersive interface.
+
+Route:
+
+`/learn/speaking`
+
+The Voice Studio should contain four connected experiences.
+
+## A. Listen and Learn
+
+Allow learners to:
+- Listen to words.
+- Listen to sentences.
+- Listen to conversations.
+- Listen to stories.
+- Replay audio.
+- Adjust playback speed.
+- Practise with available voice options.
+- Follow along with displayed text.
+
+Use Gemini TTS when configured.
+
+Use browser `speechSynthesis` as a clearly identified fallback when generated audio is unavailable.
+
+## B. Speak and Practise
+
+Implement real microphone recording.
+
+Required functionality:
+- Request microphone permission.
+- Display permission status.
+- Start recording.
+- Stop recording.
+- Display recording duration.
+- Display an animated waveform or audio-level visualisation.
+- Replay the recording.
+- Allow the learner to record again.
+- Submit audio for transcription when configured.
+- Display the resulting transcript.
+- Give useful, evidence-based feedback.
+- Show the practice history.
+
+Use browser `MediaRecorder` where supported.
+
+Handle:
+- Microphone permission denial.
+- Unsupported browsers.
+- Recording errors.
+- Empty recordings.
+- Upload failures.
+
+Do not display a fake waveform that implies recording is happening when no audio is being captured.
+
+## C. Pronunciation Coach
+
+Build a dedicated pronunciation practice experience.
+
+Workflow:
+
+1. Display a target word or sentence.
+2. Play the reference pronunciation.
+3. Allow the learner to record themselves.
+4. Transcribe the recording where possible.
+5. Compare the transcript against the target text.
+6. Identify missing, substituted or unclear words where the available evidence supports it.
+7. Provide simple pronunciation guidance.
+8. Let the learner practise again.
+
+Provide:
+- Word-level practice.
+- Sentence-level practice.
+- Repeat exercises.
+- Listening comparisons.
+- Practice history.
+
+Important accuracy rule:
+
+Do not invent phonetic measurements, pronunciation percentages or precision scores that the available technology cannot genuinely establish.
+
+Separate transcription accuracy from actual pronunciation assessment.
+
+When precise phonetic analysis is unavailable, say so and provide helpful practice guidance instead.
+
+## D. Live AI Conversations
+
+Create a real-time spoken English conversation experience using Gemini Live API.
+
+The interface should include:
+- Animated AI conversation character.
+- Live conversation state.
+- Listening indicator.
+- Speaking indicator.
+- Connecting indicator.
+- Microphone state.
+- Stop conversation control.
+- Interrupt AI response control where supported.
+- Conversation transcript.
+- Conversation history.
+- Vocabulary explanations.
+- Gentle corrections.
+- End-of-session summary.
+
+Conversation modes:
+- Everyday conversations.
+- Introductions.
+- Shopping.
+- Travel.
+- School conversations.
+- Workplace conversations.
+- Interviews.
+- Public speaking.
+- Free conversation practice.
+
+The AI should adapt to:
+- Learner age group.
+- CEFR level.
+- Topic.
+- Learning goals.
+- Conversation difficulty.
+
+It should speak naturally, patiently and encouragingly.
+
+Avoid overwhelming beginners with long explanations.
+
+### Voice architecture
+
+Use the actual Gemini Live API for real-time conversation when configured.
+
+Use Gemini TTS for generated speech and supported transcription capabilities for speech-to-text.
+
+Create secure backend endpoints for AI functionality.
+
+Do not put API keys in frontend JavaScript.
+
+Use short-lived credentials or an appropriately secured server-mediated connection for real-time sessions, following Google's current documentation.
+
+If credentials are missing:
+- Keep the interface functional where possible.
+- Use browser speech capabilities for simple demonstrations.
+- Clearly label unavailable AI functionality as demo mode.
+- Never claim that a live Gemini conversation is happening when it is not.
+
+Create a voice service abstraction so that the application can support different speech providers in the future.
+
+---
+
+# 9. PARENT EXPERIENCE
+
+Create a dedicated parent area.
+
+Routes:
+
+- `/parent/dashboard`
+- `/parent/children`
+- `/parent/children/:id`
+- `/parent/reports`
+- `/parent/settings`
+
+Features:
+- Register and manage child profiles.
+- View each child's learning progress.
+- See completed lessons.
+- Monitor learning activity.
+- View vocabulary and skill development.
+- Set appropriate learning preferences.
+- Configure age-appropriate controls.
+- Review learning reports.
+
+Parents should have visibility without turning the child's experience into a surveillance interface.
+
+Protect children's data and recordings.
+
+---
+
+# 10. TEACHER AND SCHOOL EXPERIENCE
+
+Create a dedicated teacher environment.
+
+Routes:
+
+- `/teacher/dashboard`
+- `/teacher/classrooms`
+- `/teacher/classrooms/:id`
+- `/teacher/learners`
+- `/teacher/reports`
+
+Features:
+- Create and manage classrooms.
+- Add or invite learners.
+- View learner progress.
+- Assign learning activities.
+- Monitor class performance.
+- View lesson completion.
+- Access learning reports.
+
+Include an institutional entry point from the public website.
+
+---
+
+# 11. ADMINISTRATION
+
+Create a protected administration area.
+
+Routes:
+
+- `/admin/dashboard`
+- `/admin/users`
+- `/admin/courses`
+- `/admin/modules`
+- `/admin/lessons`
+- `/admin/activities`
+- `/admin/settings`
+
+Features:
+- Manage users.
+- Manage learner accounts.
+- Create and edit programmes.
+- Manage courses and modules.
+- Create and edit lessons.
+- Manage activities and assessments.
+- Review platform-level learning statistics.
+
+Use role-based permissions.
+
+Do not expose administrative routes to ordinary learners.
+
+---
+
+# 12. PROGRESS, MOTIVATION AND GAMIFICATION
+
+Create a meaningful motivation system.
+
+Features:
+- Learning streaks.
+- Daily goals.
+- Weekly goals.
+- XP or learning points.
+- Badges.
+- Milestones.
+- Lesson completion.
+- Skill progression.
+- Achievement celebrations.
+
+Avoid excessive gamification.
+
+For young learners, use friendly rewards and illustrations.
+
+For older learners, use more sophisticated progress visualisations.
+
+Progress must be based on actual completed activities, not randomly generated numbers.
+
+---
+
+# 13. CONTENT AND LEARNING QUALITY
+
+Create a starter collection of meaningful learning content.
+
+Include sample courses for each age environment.
+
+Examples:
+
+**Little Voices**
+- Alphabet and letter sounds.
+- First words.
+- Colours and shapes.
+- Everyday objects.
+- Simple greetings.
+
+**Young Explorers**
+- Everyday vocabulary.
+- Short stories.
+- Sentence building.
+- Listening comprehension.
+- Simple conversations.
+
+**Teen Voices**
+- Speaking confidently.
+- Expressing opinions.
+- Storytelling.
+- School communication.
+- Debates and discussions.
+
+**Young Adults**
+- Academic English.
+- Everyday conversations.
+- Presentations.
+- Interview preparation.
+
+**Professional English**
+- Workplace communication.
+- Business vocabulary.
+- Meetings.
+- Presentations.
+- Professional writing.
+
+**Lifelong English**
+- Everyday communication.
+- Practical vocabulary.
+- Travel conversations.
+- Listening comprehension.
+- Confidence-building.
+
+Use clear and natural English.
+
+Where appropriate, include examples from everyday life in Kenya and other international contexts.
+
+Do not assume all learners are Kenyan or that all learners have the same cultural background.
+
+---
+
+# 14. CHILD SAFETY, PRIVACY AND ACCESSIBILITY
+
+SAUTI serves children, so safety must be part of the architecture.
+
+Implement these principles:
+
+- Age-appropriate AI interactions.
+- Parent or guardian consent workflows.
+- No unrestricted AI conversations for young children.
+- No public child profiles.
+- No open messaging between children and strangers.
+- No unnecessary collection of personal information.
+- Secure handling of voice recordings.
+- Clear recording and privacy notices.
+- Appropriate retention and deletion controls.
+- Parent-accessible privacy settings.
+- Safe and age-appropriate learning content.
+
+Do not use children's recordings for unrelated purposes.
+
+Include accessibility considerations:
+- Keyboard navigation.
+- Screen-reader-friendly labels.
+- Sufficient colour contrast.
+- Readable typography.
+- Large touch targets.
+- Reduced-motion support.
+- Clear error messages.
+
+---
+
+# 15. APPLICATION ARCHITECTURE
+
+Organise the project into maintainable modules.
+
+Use a structure similar to:
+
+```text
+sauti/
+├── public/
+│   ├── images/
+│   ├── illustrations/
+│   ├── audio/
+│   └── animations/
+├── src/
+│   ├── app/
+│   │   ├── router/
+│   │   ├── providers/
+│   │   └── layouts/
+│   ├── components/
+│   │   ├── ui/
+│   │   ├── navigation/
+│   │   ├── animations/
+│   │   ├── learning/
+│   │   └── voice/
+│   ├── pages/
+│   │   ├── marketing/
+│   │   ├── auth/
+│   │   ├── onboarding/
+│   │   ├── kids/
+│   │   ├── teens/
+│   │   ├── adults/
+│   │   ├── parent/
+│   │   ├── teacher/
+│   │   └── admin/
+│   ├── features/
+│   │   ├── learning/
+│   │   ├── speaking/
+│   │   ├── pronunciation/
+│   │   ├── listening/
+│   │   ├── reading/
+│   │   ├── writing/
+│   │   ├── vocabulary/
+│   │   ├── grammar/
+│   │   ├── progress/
+│   │   └── achievements/
+│   ├── hooks/
+│   ├── services/
+│   ├── stores/
+│   ├── types/
+│   ├── utils/
+│   └── styles/
+├── server/
+│   ├── routes/
+│   ├── controllers/
+│   ├── services/
+│   ├── middleware/
+│   └── config/
+├── prisma/
+│   └── schema.prisma
+├── .env.example
+├── README.md
+└── package.json
+```
+
+You may improve this structure where technically justified, but preserve clear separation of responsibilities.
+
+### Suggested core data entities
+
+Design a relational data model covering:
+
+- User.
+- LearnerProfile.
+- ParentProfile.
+- TeacherProfile.
+- Institution.
+- Classroom.
+- ClassroomMembership.
+- Programme.
+- Course.
+- Module.
+- Lesson.
+- Activity.
+- Assessment.
+- LearningAttempt.
+- LearnerProgress.
+- Achievement.
+- LearnerAchievement.
+- VoicePracticeSession.
+- ConversationSession.
+- LearningGoal.
+
+Use proper relationships, indexes and timestamps.
+
+Avoid storing unnecessary raw audio permanently.
+
+---
+
+# 16. FUNCTIONAL REQUIREMENTS
+
+The generated application must have real working interactions.
+
+At minimum:
+
+1. Navigation must work.
+2. Public pages must be complete.
+3. Age-group selection must work.
+4. Registration and login interfaces must work with the implemented authentication service.
+5. Onboarding must save learner preferences.
+6. Learners must be able to access their appropriate dashboard.
+7. Courses must open.
+8. Lessons must open.
+9. Learning activities must accept answers.
+10. Feedback must be displayed.
+11. Completed lessons must update progress.
+12. Speaking practice must capture real audio where supported.
+13. Recorded audio must be replayable.
+14. Transcription must use a real configured service or be clearly labelled unavailable.
+15. AI conversations must use a real configured integration or be clearly labelled demo mode.
+16. Parent and teacher pages must have coherent navigation and role-aware access.
+17. Progress visualisations must reflect actual application data.
+18. Settings must work where implemented.
+
+Do not use buttons that look functional but do nothing.
+
+Do not display fake successful API responses.
+
+Do not hardcode secret keys.
+
+---
+
+# 17. RESPONSIVE DESIGN AND PERFORMANCE
+
+Design mobile-first.
+
+The platform must work well on:
+- Small Android phones.
+- Larger smartphones.
+- Tablets.
+- Laptops.
+- Desktop monitors.
+
+Pay particular attention to:
+- Touch-friendly controls.
+- Mobile navigation.
+- Audio recording on mobile browsers.
+- Responsive lesson layouts.
+- Readable text.
+- Efficient loading.
+- Low-bandwidth environments.
+
+Optimise images and avoid unnecessarily heavy animations.
+
+Do not make the application dependent on high-end hardware.
+
+---
+
+# 18. IMPLEMENTATION STRATEGY
+
+This is a substantial product. Build it systematically instead of generating disconnected screens.
+
+Use these implementation phases:
+
+### Phase 1 — Foundation
+- Create the React 19 + TypeScript + Vite application.
+- Configure Tailwind CSS.
+- Configure React Router.
+- Configure Motion.
+- Establish design tokens.
+- Create reusable UI components.
+- Establish the application layouts.
+- Create the backend structure.
+
+### Phase 2 — Public website and onboarding
+- Build the homepage.
+- Build `/get-started`.
+- Build authentication screens.
+- Build onboarding.
+- Implement age-specific journey selection.
+
+### Phase 3 — Learning platform
+- Build learner dashboards.
+- Build learning library.
+- Build courses, modules and lessons.
+- Implement reusable learning activities.
+- Implement progress tracking.
+
+### Phase 4 — Voice Studio
+- Implement actual microphone recording.
+- Implement audio playback.
+- Implement listen-and-learn.
+- Implement speech transcription integration.
+- Implement pronunciation practice.
+- Implement Gemini Live conversation integration.
+- Implement session summaries and history.
+
+### Phase 5 — Parent, teacher and admin
+- Build separate layouts.
+- Implement dashboards.
+- Implement role-aware navigation.
+- Connect data and permissions.
+
+### Phase 6 — Quality assurance
+- Test all routes.
+- Test responsive layouts.
+- Test learning interactions.
+- Test voice recording.
+- Test error states.
+- Fix TypeScript and build errors.
+- Document setup and outstanding integrations.
+
+---
+
+# 19. IMPORTANT BUILD RULES
+
+These instructions are mandatory:
+
+1. Build SAUTI as a real application, not just a collection of attractive screenshots.
+2. Prioritise excellent visual quality and functional learning experiences equally.
+3. Keep React + Vite. Do not use Next.js.
+4. Do not omit the Voice Studio.
+5. Do not simulate AI integrations and present them as real.
+6. Do not expose API keys.
+7. Do not generate fake learning progress.
+8. Do not make every age group use the same visual interface.
+9. Do not make adult learners feel as if they are using a children's application.
+10. Do not compromise child safety for convenience.
+11. Use reusable components and maintainable code.
+12. Test the application after making substantial changes.
+13. Fix errors before moving on.
+14. Keep a clear list of completed, incomplete and credential-dependent features.
+15. Do not claim a feature is complete unless it actually works.
+
+If you cannot complete every feature in one generation, prioritise a working foundation and continue implementing the remaining phases. Do not silently remove requirements.
+
+---
+
+# 20. FINAL DELIVERY EXPECTATIONS
+
+At the end of the build, provide:
+
+1. A clear overview of the application created.
+2. The actual project structure.
+3. The routes implemented.
+4. The functional features.
+5. The voice capabilities implemented.
+6. The integrations requiring API credentials.
+7. The environment variables required.
+8. Database setup instructions.
+9. Installation and development commands.
+10. Any known limitations or incomplete features.
+
+The final product should feel like a polished, premium, modern EdTech platform.
+
+**SAUTI is not simply an English learning website. It is a voice-first learning ecosystem that helps people of every age find their voice.**
+
+Build it with that ambition.
