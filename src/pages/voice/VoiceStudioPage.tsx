@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -25,6 +26,12 @@ import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { ResilientImage } from '../../components/ui/ResilientImage';
 import { SAUTI_IMAGES } from '../../utils/environments';
+import {
+  PageTransition,
+  SAUTI_EASE,
+  SAUTI_SPRING,
+  SautiWaveGraphic,
+} from '../../components/motion/SautiMotion';
 import { ConversationSession, VoicePracticeSession } from '../../types/sauti';
 import {
   buildOfflineScopeKey,
@@ -104,6 +111,7 @@ export function VoiceStudioPage() {
   const { user, learnerProfile, activeChildId } = useAuthStore();
   const { isOnline, lowBandwidthMode } = useOfflineStore();
   const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
+  const reduced = useReducedMotion();
 
   const [activeTab, setActiveTab] = useState<StudioTab>('listen');
   const [statusInfo, setStatusInfo] = useState<{
@@ -648,21 +656,32 @@ export function VoiceStudioPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <PageTransition className="space-y-8">
       {/* Voice Studio Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold text-[#245C45] mb-1">
-            Voice Studio ·{' '}
-            {!isOnline
-              ? 'Offline Mode (Local Device Speech & Mic)'
-              : statusInfo?.provider || 'Checking voice configuration...'}
-          </p>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-[#17201C]">
-            Find your voice at your own pace
-          </h1>
+      <div className="rounded-3xl sauti-surface-warm bg-editorial-dots p-6 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl overflow-hidden border border-[#245C45]/15 bg-white shrink-0 shadow-sm">
+            <ResilientImage
+              src={SAUTI_IMAGES.voiceCompanion}
+              alt="Zuri, the SAUTI voice companion"
+              className="w-full h-full object-cover"
+              fallbackTitle="Zuri"
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
+              Voice Studio with Zuri ·{' '}
+              {!isOnline
+                ? 'Offline Mode (Local Device Speech & Mic)'
+                : statusInfo?.provider || 'Checking voice configuration...'}
+            </p>
+            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold text-[#17201C] leading-tight">
+              Find your voice at your own pace
+            </h1>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-1.5 p-1.5 rounded-2xl bg-[#FDF3E3] border border-[#245C45]/12">
+
+        <div className="flex flex-wrap gap-1.5 p-1.5 rounded-2xl bg-[#FFF8ED] border border-[#245C45]/14 shadow-xs">
           {[
             { id: 'listen', label: 'Listen & Learn', icon: Headphones },
             { id: 'speak', label: 'Speak & Practise', icon: Mic },
@@ -676,14 +695,19 @@ export function VoiceStudioPage() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id as StudioTab)}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
-                  active
-                    ? 'bg-[#245C45] text-[#FFF8ED]'
-                    : 'text-[#4A5851] hover:text-[#17201C]'
+                className={`relative inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
+                  active ? 'text-[#FFF8ED]' : 'text-[#4A5851] hover:text-[#17201C]'
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                <span>{tab.label}</span>
+                {active && (
+                  <motion.span
+                    layoutId="voice-studio-tab"
+                    transition={reduced ? { duration: 0 } : SAUTI_SPRING}
+                    className="absolute inset-0 rounded-xl bg-[#245C45] shadow-xs"
+                  />
+                )}
+                <Icon className="w-4 h-4 relative z-10" />
+                <span className="relative z-10">{tab.label}</span>
               </button>
             );
           })}
@@ -691,8 +715,16 @@ export function VoiceStudioPage() {
       </div>
 
       {/* TAB A: LISTEN & LEARN */}
+      <AnimatePresence mode="wait">
       {activeTab === 'listen' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <motion.div
+          key="tab-listen"
+          initial={reduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduced ? undefined : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.22, ease: SAUTI_EASE }}
+          className="grid grid-cols-1 lg:grid-cols-12 gap-6"
+        >
           <div className="lg:col-span-5 space-y-3">
             {LISTEN_ITEMS.map((item, idx) => {
               const savedOffline = savedListenIds.has(`listen-${idx}`);
@@ -743,7 +775,7 @@ export function VoiceStudioPage() {
             })}
           </div>
 
-          <div className="lg:col-span-7 rounded-3xl bg-white border border-[#245C45]/12 p-7 flex flex-col justify-between space-y-6">
+          <div className="lg:col-span-7 rounded-3xl sauti-surface p-7 flex flex-col justify-between space-y-6">
             <div>
               <p className="text-xs font-semibold text-[#245C45] mb-2">
                 {LISTEN_ITEMS[selectedListenIdx].category} · Follow along as you listen
@@ -832,6 +864,7 @@ export function VoiceStudioPage() {
                     Stop
                   </button>
                 )}
+                <SautiWaveGraphic active={speech.isSpeaking} className="ml-1" />
               </div>
 
               {speech.engineUsed !== 'idle' && (
@@ -843,12 +876,19 @@ export function VoiceStudioPage() {
               )}
             </div>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* TAB B: SPEAK & PRACTISE */}
       {activeTab === 'speak' && (
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-9 space-y-6">
+        <motion.div
+          key="tab-speak"
+          initial={reduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduced ? undefined : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.22, ease: SAUTI_EASE }}
+          className="rounded-3xl sauti-surface p-7 sm:p-9 space-y-6"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-display text-2xl font-bold">Speak &amp; Practise</h2>
@@ -1084,12 +1124,19 @@ export function VoiceStudioPage() {
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* TAB C: PRONUNCIATION COACH */}
       {activeTab === 'pronunciation' && (
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-9 space-y-6">
+        <motion.div
+          key="tab-pronunciation"
+          initial={reduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduced ? undefined : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.22, ease: SAUTI_EASE }}
+          className="rounded-3xl sauti-surface p-7 sm:p-9 space-y-6"
+        >
           <div className="flex flex-wrap gap-2">
             {PRONUNCIATION_TARGETS.map((t, idx) => (
               <button
@@ -1213,13 +1260,20 @@ export function VoiceStudioPage() {
               </p>
             </div>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* TAB D: LIVE AI CONVERSATIONS */}
       {activeTab === 'live' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-4 rounded-3xl bg-white border border-[#245C45]/12 p-6 space-y-5">
+        <motion.div
+          key="tab-live"
+          initial={reduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduced ? undefined : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.22, ease: SAUTI_EASE }}
+          className="grid grid-cols-1 lg:grid-cols-12 gap-6"
+        >
+          <div className="lg:col-span-4 rounded-3xl sauti-surface p-6 space-y-5">
             <div className="space-y-3">
               <div className="flex items-center gap-4">
                 <ResilientImage
@@ -1347,21 +1401,26 @@ export function VoiceStudioPage() {
                   </p>
                 </div>
               ) : (
-                transcriptList.map((item, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-2xl p-4 text-sm max-w-[85%] ${
-                      item.role === 'user'
-                        ? 'ml-auto bg-[#245C45] text-[#FFF8ED]'
-                        : 'bg-[#FDF3E3] text-[#17201C]'
-                    }`}
-                  >
-                    <p className="text-[11px] opacity-70 mb-1">
-                      {item.role === 'user' ? 'You' : 'SAUTI'} · {item.timestamp}
-                    </p>
-                    <p>{item.text}</p>
-                  </div>
-                ))
+                <AnimatePresence initial={false}>
+                  {transcriptList.map((item, i) => (
+                    <motion.div
+                      key={`${i}-${item.timestamp}`}
+                      initial={reduced ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.22, ease: SAUTI_EASE }}
+                      className={`rounded-2xl p-4 text-sm max-w-[85%] ${
+                        item.role === 'user'
+                          ? 'ml-auto bg-[#245C45] text-[#FFF8ED]'
+                          : 'bg-[#FDF3E3] text-[#17201C] border border-[#245C45]/10'
+                      }`}
+                    >
+                      <p className="text-[11px] opacity-70 mb-1">
+                        {item.role === 'user' ? 'You' : 'Zuri · SAUTI'} · {item.timestamp}
+                      </p>
+                      <p>{item.text}</p>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               )}
             </div>
 
@@ -1405,11 +1464,12 @@ export function VoiceStudioPage() {
               </button>
             </div>
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Voice Practice & Conversation History */}
-      <div className="rounded-3xl bg-white border border-[#245C45]/12 p-6 sm:p-8 space-y-4">
+      <div className="rounded-3xl sauti-surface p-6 sm:p-8 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl font-bold">Recent Voice Practice History</h2>
           <span className="text-xs text-[#4A5851]">
@@ -1453,6 +1513,6 @@ export function VoiceStudioPage() {
           </div>
         )}
       </div>
-    </div>
+    </PageTransition>
   );
 }

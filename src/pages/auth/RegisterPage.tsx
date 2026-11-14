@@ -11,6 +11,7 @@ import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { AccountType, LearningEnvironment } from '../../types/sauti';
 import { ENVIRONMENTS } from '../../utils/environments';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 const schema = z.object({
   displayName: z.string().min(2, 'Please enter at least 2 characters'),
@@ -129,10 +130,11 @@ export function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FFF8ED] text-[#17201C]">
+    <div className="min-h-screen bg-[#FFF8ED] bg-warm-grid text-[#17201C]">
       <PublicHeader />
-      <main className="max-w-lg mx-auto px-4 py-12">
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-9">
+      <PageTransition>
+        <main className="max-w-lg mx-auto px-4 py-12">
+          <div className="rounded-3xl sauti-surface p-7 sm:p-9">
           <h1 className="font-display text-3xl font-bold mb-2">Create your SAUTI account</h1>
           <p className="text-sm text-[#4A5851] mb-6">
             Begin your voice-first English journey for yourself, your child, or your classroom.
@@ -271,6 +273,7 @@ export function RegisterPage() {
           </p>
         </div>
       </main>
+      </PageTransition>
     </div>
   );
 }

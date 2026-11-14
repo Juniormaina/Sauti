@@ -1,5 +1,6 @@
 import { ReactNode, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { MotionConfig } from 'motion/react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { firebaseAuth } from './lib/firebase';
 import { apiFetch } from './services/api';
@@ -164,8 +165,9 @@ export default function App() {
   }, [setInitialized, setSession]);
 
   return (
-    <BrowserRouter>
-      <Routes>
+    <MotionConfig reducedMotion="user">
+      <BrowserRouter>
+        <Routes>
         {/* Public Marketing Website */}
         <Route path="/" element={<HomePage />} />
         <Route path="/get-started" element={<GetStartedPage />} />
@@ -224,5 +226,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
+    </MotionConfig>
   );
 }

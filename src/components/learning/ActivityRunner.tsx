@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   CheckCircle2,
   Clock,
@@ -21,6 +22,7 @@ import {
   buildServerVerifiedActivityOutcome,
 } from '../../lib/offlineSyncEngine';
 import { createClientAttemptId, useOfflineStore } from '../../stores/offlineStore';
+import { CelebrationBurst, SAUTI_EASE } from '../motion/SautiMotion';
 
 interface ActivityRunnerProps {
   activity: Activity;
@@ -39,6 +41,7 @@ export function ActivityRunner({
   const { user, learnerProfile } = useAuthStore();
   const { isOnline, queueProgressUpdate, verifiedByEndpoint } = useOfflineStore();
   const scopeKey = buildOfflineScopeKey(user?.id, learnerId ?? learnerProfile?.id ?? null);
+  const reduced = useReducedMotion();
 
   const { speak, isSpeaking } = useSpeechPlayback();
   const recorder = useAudioRecorder();
@@ -165,7 +168,7 @@ export function ActivityRunner({
     : 'py-3 px-4 rounded-xl text-sm font-semibold';
 
   return (
-    <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6 sm:p-8 space-y-5">
+    <div className="rounded-2xl sauti-surface p-6 sm:p-8 space-y-5">
       <div>
         <p className="text-xs font-mono text-[#4A5851] mb-1">
           {activity.type.replace(/_/g, ' ')} · {activity.points} pts
@@ -511,46 +514,56 @@ export function ActivityRunner({
       )}
 
       {/* Feedback & Verification Banner */}
-      {outcome && (
-        <div
-          className={`rounded-xl p-4 border flex items-start gap-3 text-sm ${
-            outcome.verificationStatus === 'queued_offline'
-              ? 'bg-[#FDF3E3] border-[#F6C96B] text-[#17201C]'
-              : outcome.verificationStatus === 'verified' && outcome.isCorrect
-              ? 'bg-[#245C45]/10 border-[#245C45]/30 text-[#17201C]'
-              : 'bg-[#F28B75]/15 border-[#F28B75] text-[#17201C]'
-          }`}
-        >
-          {outcome.verificationStatus === 'queued_offline' ? (
-            <Clock className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
-          ) : outcome.verificationStatus === 'verified' && outcome.isCorrect ? (
-            <CheckCircle2 className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
-          ) : (
-            <XCircle className="w-5 h-5 text-[#B43C25] shrink-0 mt-0.5" />
-          )}
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold">
-                {outcome.verificationStatus === 'queued_offline'
-                  ? 'Attempted locally · Waiting to sync (Unverified)'
-                  : outcome.verificationStatus === 'verified'
-                  ? outcome.isCorrect
-                    ? outcome.alreadyMastered || outcome.xpAwarded === 0
-                      ? 'Verified by SAUTI · Correct (+0 XP, already recorded)'
-                      : `Verified by SAUTI · Correct (+${outcome.xpAwarded ?? outcome.score ?? 0} XP)`
-                    : 'Verified by SAUTI · Keep practising'
-                  : 'Submission not verified'}
-              </p>
-              {outcome.verificationStatus === 'queued_offline' && (
-                <span className="px-2 py-0.5 rounded-md bg-[#F6C96B]/40 text-xs font-semibold text-[#17201C]">
-                  0 XP awarded offline
-                </span>
-              )}
+      <AnimatePresence mode="wait">
+        {outcome && (
+          <motion.div
+            key={`${outcome.verificationStatus}-${String(outcome.isCorrect)}`}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduced ? undefined : { opacity: 0 }}
+            transition={{ duration: 0.22, ease: SAUTI_EASE }}
+            className={`rounded-xl p-4 border flex items-start gap-3 text-sm ${
+              outcome.verificationStatus === 'queued_offline'
+                ? 'bg-[#FDF3E3] border-[#F6C96B] text-[#17201C]'
+                : outcome.verificationStatus === 'verified' && outcome.isCorrect
+                ? 'bg-[#245C45]/10 border-[#245C45]/30 text-[#17201C]'
+                : 'bg-[#F28B75]/15 border-[#F28B75] text-[#17201C]'
+            }`}
+          >
+            {outcome.verificationStatus === 'queued_offline' ? (
+              <Clock className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
+            ) : outcome.verificationStatus === 'verified' && outcome.isCorrect ? (
+              <CheckCircle2 className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
+            ) : (
+              <XCircle className="w-5 h-5 text-[#B43C25] shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold">
+                  {outcome.verificationStatus === 'queued_offline'
+                    ? 'Attempted locally · Waiting to sync (Unverified)'
+                    : outcome.verificationStatus === 'verified'
+                    ? outcome.isCorrect
+                      ? outcome.alreadyMastered || outcome.xpAwarded === 0
+                        ? 'Verified by SAUTI · Correct (+0 XP, already recorded)'
+                        : `Verified by SAUTI · Correct (+${outcome.xpAwarded ?? outcome.score ?? 0} XP)`
+                      : 'Verified by SAUTI · Keep practising'
+                    : 'Submission not verified'}
+                </p>
+                {outcome.verificationStatus === 'queued_offline' && (
+                  <span className="px-2 py-0.5 rounded-md bg-[#F6C96B]/40 text-xs font-semibold text-[#17201C]">
+                    0 XP awarded offline
+                  </span>
+                )}
+                {isKids && outcome.verificationStatus === 'verified' && outcome.isCorrect && (
+                  <CelebrationBurst active label="Star earned!" />
+                )}
+              </div>
+              <p className="text-[#4A5851]">{outcome.feedback}</p>
             </div>
-            <p className="text-[#4A5851]">{outcome.feedback}</p>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

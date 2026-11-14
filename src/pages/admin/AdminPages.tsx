@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BookOpen, Layers, LayoutDashboard, ListChecks, Settings, Users } from 'lucide-react';
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 const ADMIN_NAV = [
   { to: '/admin/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -42,7 +43,7 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
 
   return (
     <PortalLayout title="SAUTI Admin" subtitle="Curriculum & Governance" navItems={ADMIN_NAV}>
-      <div className="space-y-8">
+      <PageTransition className="space-y-8">
         <div>
           <h1 className="font-display text-3xl font-bold capitalize">Admin · {section}</h1>
           <p className="text-sm text-[#4A5851]">
@@ -59,7 +60,7 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
               { label: 'Completions', value: stats.completions },
               { label: 'Voice Sessions', value: stats.voiceSessions },
             ].map((s) => (
-              <div key={s.label} className="rounded-2xl bg-white border border-[#245C45]/12 p-4">
+              <div key={s.label} className="rounded-2xl sauti-surface p-4">
                 <p className="text-xs text-[#4A5851]">{s.label}</p>
                 <p className="font-display text-2xl font-bold tabular-nums mt-1">{s.value}</p>
               </div>
@@ -133,7 +134,7 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
             </div>
           </div>
         )}
-      </div>
+      </PageTransition>
     </PortalLayout>
   );
 }

@@ -11,6 +11,7 @@ import {
   ScopeStorageSummary,
 } from '../../lib/offlineDb';
 import { useOfflineStore } from '../../stores/offlineStore';
+import { AnimatedProgressBar, PageTransition } from '../../components/motion/SautiMotion';
 
 export function LearnerAchievementsPage() {
   const { activeChildId } = useAuthStore();
@@ -26,7 +27,7 @@ export function LearnerAchievementsPage() {
   }, [activeChildId]);
 
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       <div>
         <h1 className="font-display text-3xl font-bold">Achievements &amp; Milestones</h1>
         <p className="text-sm text-[#4A5851] tabular-nums">
@@ -52,7 +53,7 @@ export function LearnerAchievementsPage() {
           </div>
         ))}
       </div>
-    </div>
+    </PageTransition>
   );
 }
 
@@ -67,30 +68,36 @@ export function LearnerProgressPage() {
 
   if (!dashboard) return <div className="h-48 rounded-2xl bg-[#245C45]/10 animate-pulse" />;
 
+  const progressPct = Math.round(
+    (Number(dashboard.completedLessonsCount || 0) / Math.max(1, Number(dashboard.totalLessonsCount || 1))) *
+      100
+  );
+
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       <h1 className="font-display text-3xl font-bold">Learning Progress</h1>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6">
+        <div className="rounded-2xl sauti-surface p-6 space-y-2">
           <p className="text-xs text-[#4A5851]">Lessons Completed</p>
-          <p className="font-display text-3xl font-bold tabular-nums mt-1">
+          <p className="font-display text-3xl font-bold tabular-nums">
             {dashboard.completedLessonsCount} / {dashboard.totalLessonsCount}
           </p>
+          <AnimatedProgressBar value={progressPct} ariaLabel="Completed lessons progress" />
         </div>
-        <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6">
+        <div className="rounded-2xl sauti-surface p-6">
           <p className="text-xs text-[#4A5851]">Current Streak</p>
           <p className="font-display text-3xl font-bold tabular-nums mt-1 flex items-center gap-2">
             <Flame className="w-6 h-6 text-[#F28B75]" />
             {dashboard.learner?.streakDays || 0} days
           </p>
         </div>
-        <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6">
+        <div className="rounded-2xl sauti-surface p-6">
           <p className="text-xs text-[#4A5851]">CEFR Level</p>
           <p className="font-display text-3xl font-bold mt-1">{dashboard.learner?.cefrLevel}</p>
         </div>
       </div>
 
-      <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6 space-y-3">
+      <div className="rounded-2xl sauti-surface p-6 space-y-3">
         <h2 className="font-display text-xl font-bold">Pathway Checklist</h2>
         {(dashboard.recommendedLessons || []).map((l: any) => (
           <div key={l.id} className="flex items-center justify-between py-2 border-b border-[#245C45]/8 last:border-0">
@@ -101,7 +108,7 @@ export function LearnerProgressPage() {
           </div>
         ))}
       </div>
-    </div>
+    </PageTransition>
   );
 }
 
@@ -117,9 +124,9 @@ export function LearnerHistoryPage() {
   if (!history) return <div className="h-48 rounded-2xl bg-[#245C45]/10 animate-pulse" />;
 
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       <h1 className="font-display text-3xl font-bold">Practice &amp; Activity History</h1>
-      <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6 space-y-3">
+      <div className="rounded-2xl sauti-surface p-6 space-y-3">
         <h2 className="font-display text-lg font-bold">Recent Activity Attempts</h2>
         {history.attempts?.length === 0 ? (
           <p className="text-sm text-[#4A5851]">No lesson activity attempts yet.</p>
@@ -132,7 +139,7 @@ export function LearnerHistoryPage() {
           ))
         )}
       </div>
-    </div>
+    </PageTransition>
   );
 }
 
@@ -204,7 +211,7 @@ export function LearnerProfileSettingsPage() {
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <PageTransition className="max-w-2xl space-y-6">
       <h1 className="font-display text-3xl font-bold">Profile &amp; Learning Settings</h1>
       {savedMsg && (
         <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-4 text-sm flex items-center gap-2">
@@ -437,6 +444,6 @@ export function LearnerProfileSettingsPage() {
           </button>
         </div>
       </section>
-    </div>
+    </PageTransition>
   );
 }

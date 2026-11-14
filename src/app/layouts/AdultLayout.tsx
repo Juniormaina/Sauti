@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   Award,
   BarChart3,
@@ -14,12 +15,14 @@ import {
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
 import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
+import { SAUTI_SPRING } from '../../components/motion/SautiMotion';
 
 export function AdultLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { learnerProfile, logout } = useAuthStore();
   const isLifelong = learnerProfile?.environment === 'lifelong_english';
+  const reduced = useReducedMotion();
 
   const navItems = [
     { to: '/learn/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -39,7 +42,11 @@ export function AdultLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`min-h-screen bg-[#FFF8ED] text-[#17201C] flex ${isLifelong ? 'text-[17px]' : 'text-[15px]'}`}>
+    <div
+      className={`min-h-screen bg-[#FFF8ED] text-[#17201C] flex ${
+        isLifelong ? 'text-[17px]' : 'text-[15px]'
+      }`}
+    >
       {/* Refined Editorial Sidebar */}
       <aside className="hidden lg:flex lg:w-64 lg:flex-col border-r border-[#245C45]/12 bg-[#FDF6EA] px-5 py-6">
         <Link to="/learn/dashboard" className="font-display text-2xl font-bold text-[#245C45] mb-1">
@@ -57,14 +64,21 @@ export function AdultLayout({ children }: { children: ReactNode }) {
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium transition-colors ${
+                className={`relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium transition-colors ${
                   active
-                    ? 'bg-[#245C45] text-[#FFF8ED]'
+                    ? 'text-[#FFF8ED]'
                     : 'text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C]'
                 }`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span>{item.label}</span>
+                {active && (
+                  <motion.span
+                    layoutId="adult-active-nav"
+                    transition={reduced ? { duration: 0 } : SAUTI_SPRING}
+                    className="absolute inset-0 rounded-xl bg-[#245C45]"
+                  />
+                )}
+                <Icon className="w-4 h-4 shrink-0 relative z-10" />
+                <span className="relative z-10">{item.label}</span>
               </Link>
             );
           })}
@@ -77,7 +91,7 @@ export function AdultLayout({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={handleSignOut}
-            className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C]"
+            className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C] transition-colors"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign out</span>
@@ -92,10 +106,18 @@ export function AdultLayout({ children }: { children: ReactNode }) {
             SAUTI
           </Link>
           <div className="flex items-center gap-2">
-            <Link to="/learn/speaking" className="px-3 py-1.5 rounded-lg bg-[#245C45] text-[#FFF8ED] text-xs font-semibold">
+            <Link
+              to="/learn/speaking"
+              className="px-3 py-1.5 rounded-lg bg-[#245C45] text-[#FFF8ED] text-xs font-semibold"
+            >
               Voice Studio
             </Link>
-            <button type="button" onClick={handleSignOut} aria-label="Sign out" className="p-2 text-[#4A5851]">
+            <button
+              type="button"
+              onClick={handleSignOut}
+              aria-label="Sign out"
+              className="p-2 text-[#4A5851]"
+            >
               <LogOut className="w-4 h-4" />
             </button>
           </div>
@@ -106,7 +128,7 @@ export function AdultLayout({ children }: { children: ReactNode }) {
           {children}
         </main>
 
-        <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-[#FFF8ED] border-t border-[#245C45]/12 px-2 py-2 flex items-center justify-around z-30">
+        <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-[#FFF8ED]/95 backdrop-blur border-t border-[#245C45]/12 px-2 py-2 flex items-center justify-around z-30">
           {navItems.slice(0, 4).map((item) => {
             const Icon = item.icon;
             const active = location.pathname.startsWith(item.to);
@@ -115,7 +137,7 @@ export function AdultLayout({ children }: { children: ReactNode }) {
                 key={item.to}
                 to={item.to}
                 className={`flex flex-col items-center py-1 px-2 text-xs font-medium ${
-                  active ? 'text-[#245C45]' : 'text-[#4A5851]'
+                  active ? 'text-[#245C45] font-semibold' : 'text-[#4A5851]'
                 }`}
               >
                 <Icon className="w-5 h-5 mb-0.5" />

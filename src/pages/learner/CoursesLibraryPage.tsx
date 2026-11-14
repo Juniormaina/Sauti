@@ -7,6 +7,7 @@ import { ENVIRONMENTS } from '../../utils/environments';
 import { useAuthStore } from '../../stores/authStore';
 import { buildOfflineScopeKey, listOfflineCourses } from '../../lib/offlineDb';
 import { useOfflineStore } from '../../stores/offlineStore';
+import { MotionCard, PageTransition } from '../../components/motion/SautiMotion';
 
 export function CoursesLibraryPage() {
   const { user, learnerProfile, activeChildId } = useAuthStore();
@@ -65,9 +66,9 @@ export function CoursesLibraryPage() {
   }, [activeChildId, envFilter, levelFilter, skillFilter, maxDuration, scopeKey, isOnline]);
 
   return (
-    <div className="space-y-8">
+    <PageTransition className="space-y-8">
       <div>
-        <p className="text-xs font-semibold text-[#245C45] mb-1">
+        <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
           Learning Library {showingOfflineOnly ? '· Offline Downloaded Courses' : ''}
         </p>
         <h1 className="font-display text-3xl font-bold">Explore Courses &amp; Pathways</h1>
@@ -77,7 +78,7 @@ export function CoursesLibraryPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="rounded-2xl bg-white border border-[#245C45]/12 p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="rounded-2xl sauti-surface p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <select
           aria-label="Filter by age environment"
           value={envFilter}
@@ -159,37 +160,38 @@ export function CoursesLibraryPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {courses.map((course) => (
-            <Link
-              key={course.id}
-              to={`/learn/courses/${course.id}`}
-              className="rounded-2xl bg-white border border-[#245C45]/12 p-6 hover:border-[#245C45] transition-colors flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <p className="text-xs text-[#4A5851]">
-                    {course.programme?.title} · {course.cefrLevel} · {course.topic}
-                  </p>
-                  {offlineCourseIds.has(course.id) && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#245C45] shrink-0">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Offline
-                    </span>
-                  )}
+            <MotionCard key={course.id} className="h-full">
+              <Link
+                to={`/learn/courses/${course.id}`}
+                className="h-full rounded-2xl sauti-surface p-6 hover:border-[#245C45] transition-colors flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-xs font-mono text-[#4A5851]">
+                      {course.programme?.title} · {course.cefrLevel} · {course.topic}
+                    </p>
+                    {offlineCourseIds.has(course.id) && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#245C45] shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Offline
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="font-display text-xl font-bold mb-2">{course.title}</h2>
+                  <p className="text-sm text-[#4A5851] leading-relaxed mb-4">{course.description}</p>
                 </div>
-                <h2 className="font-display text-xl font-bold mb-2">{course.title}</h2>
-                <p className="text-sm text-[#4A5851] leading-relaxed mb-4">{course.description}</p>
-              </div>
-              <div className="flex items-center justify-between pt-3 border-t border-[#245C45]/10 text-xs font-semibold text-[#245C45]">
-                <span className="inline-flex items-center gap-1 tabular-nums">
-                  <Clock className="w-3.5 h-3.5" /> {course.estimatedMinutes} min
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  Open course <ArrowRight className="w-3.5 h-3.5" />
-                </span>
-              </div>
-            </Link>
+                <div className="flex items-center justify-between pt-3 border-t border-[#245C45]/10 text-xs font-semibold text-[#245C45]">
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    <Clock className="w-3.5 h-3.5" /> {course.estimatedMinutes} min
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    Open course <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </Link>
+            </MotionCard>
           ))}
         </div>
       )}
-    </div>
+    </PageTransition>
   );
 }

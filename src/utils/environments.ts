@@ -1,11 +1,17 @@
 import { AgeRange, CefrLevel, LearningEnvironment } from '../types/sauti';
 
+import heroVoicesImg from '../assets/images/hero_sauti_voices_1794596039213.jpg';
+import littleVoicesImg from '../assets/images/journey_little_voices_1794596040249.jpg';
+import teenAdultImg from '../assets/images/journey_teen_adult_1794596040545.jpg';
+import professionalLifelongImg from '../assets/images/journey_professional_lifelong_1794596041360.jpg';
+import voiceCompanionImg from '../assets/images/voice_studio_companion_1794596041274.jpg';
+
 export const SAUTI_IMAGES = {
-  heroVoices: '/src/assets/images/hero_sauti_voices_1794596039213.jpg',
-  littleVoices: '/src/assets/images/journey_little_voices_1794596040249.jpg',
-  teenAdult: '/src/assets/images/journey_teen_adult_1794596040545.jpg',
-  professionalLifelong: '/src/assets/images/journey_professional_lifelong_1794596041360.jpg',
-  voiceCompanion: '/src/assets/images/voice_studio_companion_1794596041274.jpg',
+  heroVoices: heroVoicesImg,
+  littleVoices: littleVoicesImg,
+  teenAdult: teenAdultImg,
+  professionalLifelong: professionalLifelongImg,
+  voiceCompanion: voiceCompanionImg,
 };
 
 export interface EnvironmentMeta {

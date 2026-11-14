@@ -9,6 +9,7 @@ import { PublicHeader } from '../../components/navigation/PublicHeader';
 import { firebaseAuth, googleAuthProvider } from '../../lib/firebase';
 import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -85,10 +86,11 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FFF8ED] text-[#17201C]">
+    <div className="min-h-screen bg-[#FFF8ED] bg-warm-grid text-[#17201C]">
       <PublicHeader />
-      <main className="max-w-md mx-auto px-4 py-14">
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-9">
+      <PageTransition>
+        <main className="max-w-md mx-auto px-4 py-14">
+          <div className="rounded-3xl sauti-surface p-7 sm:p-9">
           <h1 className="font-display text-3xl font-bold mb-2">Welcome back</h1>
           <p className="text-sm text-[#4A5851] mb-6">
             Sign in to continue your lessons and Voice Studio sessions.
@@ -167,6 +169,7 @@ export function LoginPage() {
           </p>
         </div>
       </main>
+      </PageTransition>
     </div>
   );
 }

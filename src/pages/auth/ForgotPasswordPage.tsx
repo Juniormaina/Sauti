@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { PublicHeader } from '../../components/navigation/PublicHeader';
 import { apiFetch } from '../../services/api';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -29,10 +30,11 @@ export function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FFF8ED] text-[#17201C]">
+    <div className="min-h-screen bg-[#FFF8ED] bg-warm-grid text-[#17201C]">
       <PublicHeader />
-      <main className="max-w-md mx-auto px-4 py-14">
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-9">
+      <PageTransition>
+        <main className="max-w-md mx-auto px-4 py-14">
+          <div className="rounded-3xl sauti-surface p-7 sm:p-9">
           <h1 className="font-display text-2xl font-bold mb-2">Reset your password</h1>
           <p className="text-sm text-[#4A5851] mb-6">
             Enter the email address associated with your SAUTI account.
@@ -82,6 +84,7 @@ export function ForgotPasswordPage() {
           </p>
         </div>
       </main>
+      </PageTransition>
     </div>
   );
 }

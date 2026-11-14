@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { BarChart3, BookOpen, LayoutDashboard, Plus, Users } from 'lucide-react';
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
+import { MotionCard, PageTransition } from '../../components/motion/SautiMotion';
 
 const TEACHER_NAV = [
   { to: '/teacher/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -60,7 +61,7 @@ export function TeacherPortalPage() {
 
   return (
     <PortalLayout title="Teacher & School" subtitle="Classrooms & Cohorts" navItems={TEACHER_NAV}>
-      <div className="space-y-8">
+      <PageTransition className="space-y-8">
         {statusMsg && (
           <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-4 text-sm">
             {statusMsg}
@@ -124,23 +125,24 @@ export function TeacherPortalPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {(data?.classrooms || []).map((cls) => (
-                <Link
-                  key={cls.id}
-                  to={`/teacher/classrooms/${cls.id}`}
-                  className="rounded-2xl bg-white border border-[#245C45]/12 p-6 hover:border-[#245C45] transition-colors space-y-2"
-                >
-                  <p className="text-xs font-mono text-[#245C45]">Code: {cls.joinCode}</p>
-                  <h2 className="font-display text-xl font-bold">{cls.name}</h2>
-                  <p className="text-xs text-[#4A5851] tabular-nums">
-                    {cls.learnerCount} learners · CEFR {cls.cefrLevel}
-                  </p>
-                </Link>
+                <MotionCard key={cls.id} className="h-full">
+                  <Link
+                    to={`/teacher/classrooms/${cls.id}`}
+                    className="h-full rounded-2xl sauti-surface p-6 hover:border-[#245C45] transition-colors space-y-2 block"
+                  >
+                    <p className="text-xs font-mono text-[#245C45]">Code: {cls.joinCode}</p>
+                    <h2 className="font-display text-xl font-bold">{cls.name}</h2>
+                    <p className="text-xs text-[#4A5851] tabular-nums">
+                      {cls.learnerCount} learners · CEFR {cls.cefrLevel}
+                    </p>
+                  </Link>
+                </MotionCard>
               ))}
             </div>
 
             <form
               onSubmit={handleCreateClassroom}
-              className="rounded-3xl bg-white border border-[#245C45]/12 p-7 space-y-4 max-w-2xl"
+              className="rounded-3xl sauti-surface p-7 space-y-4 max-w-2xl"
             >
               <h2 className="font-display text-xl font-bold flex items-center gap-2">
                 <Plus className="w-5 h-5 text-[#245C45]" /> Create Classroom
@@ -174,7 +176,7 @@ export function TeacherPortalPage() {
             </form>
           </>
         )}
-      </div>
+      </PageTransition>
     </PortalLayout>
   );
 }

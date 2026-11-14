@@ -14,6 +14,7 @@ import {
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 const PARENT_NAV = [
   { to: '/parent/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -147,7 +148,7 @@ export function ParentDashboardPage({
 
   return (
     <PortalLayout title="Parent Portal" subtitle="Family Safety & Progress" navItems={PARENT_NAV}>
-      <div className="space-y-8">
+      <PageTransition className="space-y-8">
         {msg && (
           <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-4 text-sm flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-[#245C45]" />
@@ -252,7 +253,7 @@ export function ParentDashboardPage({
             </div>
           </div>
         ) : section === 'settings' ? (
-          <div className="max-w-xl rounded-3xl bg-white border border-[#245C45]/12 p-7 space-y-5">
+          <div className="max-w-xl rounded-3xl sauti-surface p-7 space-y-5">
             <h1 className="font-display text-2xl font-bold">Child Privacy &amp; Safety Controls</h1>
             <p className="text-sm text-[#4A5851]">
               Children never have public profiles or open messaging. Configure AI Live voice
@@ -329,7 +330,7 @@ export function ParentDashboardPage({
               {(data?.children || []).map((child) => (
                 <div
                   key={child.id}
-                  className="rounded-2xl bg-white border border-[#245C45]/12 p-6 flex flex-col justify-between space-y-4"
+                  className="rounded-2xl sauti-surface p-6 flex flex-col justify-between space-y-4"
                 >
                   <div>
                     <p className="text-xs text-[#4A5851] mb-1">
@@ -362,7 +363,7 @@ export function ParentDashboardPage({
             {/* Add Child Profile Form */}
             <form
               onSubmit={handleCreateChild}
-              className="rounded-3xl bg-white border border-[#245C45]/12 p-7 space-y-4 max-w-2xl"
+              className="rounded-3xl sauti-surface p-7 space-y-4 max-w-2xl"
             >
               <h2 className="font-display text-xl font-bold flex items-center gap-2">
                 <Plus className="w-5 h-5 text-[#245C45]" /> Register a Child Profile
@@ -410,7 +411,7 @@ export function ParentDashboardPage({
             </form>
           </>
         )}
-      </div>
+      </PageTransition>
     </PortalLayout>
   );
 }

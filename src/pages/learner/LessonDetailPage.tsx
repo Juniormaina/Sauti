@@ -22,6 +22,7 @@ import {
   saveOfflineLesson,
 } from '../../lib/offlineDb';
 import { createClientAttemptId, useOfflineStore } from '../../stores/offlineStore';
+import { CelebrationBurst, PageTransition } from '../../components/motion/SautiMotion';
 
 export function LessonDetailPage() {
   const { id } = useParams();
@@ -226,7 +227,7 @@ export function LessonDetailPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <PageTransition className="space-y-8">
       {/* Lesson Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
@@ -270,7 +271,7 @@ export function LessonDetailPage() {
       </div>
 
       {/* Introduction & Audio Story */}
-      <section className="rounded-3xl bg-white border border-[#245C45]/12 p-6 sm:p-8 space-y-5">
+      <section className="rounded-3xl sauti-surface p-6 sm:p-8 space-y-5">
         <p className="text-base text-[#17201C] leading-relaxed">{lesson.introduction}</p>
 
         {lesson.contentJson?.audioScript && (
@@ -396,6 +397,9 @@ export function LessonDetailPage() {
                 SAUTI will verify your activities and award earned XP automatically.
               </p>
             )}
+            {lessonCompleted.verificationStatus === 'verified' && (
+              <CelebrationBurst active label="Verified completion" />
+            )}
             {(lessonCompleted.newlyEarnedAchievements?.length ?? 0) > 0 && (
               <p className="text-sm text-[#F6C96B] flex items-center gap-2">
                 <Award className="w-4 h-4" />
@@ -434,6 +438,6 @@ export function LessonDetailPage() {
           </button>
         )}
       </section>
-    </div>
+    </PageTransition>
   );
 }

@@ -1,9 +1,11 @@
 import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
 import { LogOut, LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
 import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
+import { SAUTI_SPRING } from '../../components/motion/SautiMotion';
 
 export interface PortalNavItem {
   to: string;
@@ -25,6 +27,7 @@ export function PortalLayout({
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const reduced = useReducedMotion();
 
   const handleSignOut = async () => {
     await firebaseAuth.signOut().catch(() => {});
@@ -63,14 +66,21 @@ export function PortalLayout({
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium whitespace-nowrap transition-colors ${
+                  className={`relative flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium whitespace-nowrap transition-colors ${
                     active
-                      ? 'bg-[#245C45] text-[#FFF8ED]'
+                      ? 'text-[#FFF8ED]'
                       : 'text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C]'
                   }`}
                 >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span>{item.label}</span>
+                  {active && (
+                    <motion.span
+                      layoutId="portal-active-nav"
+                      transition={reduced ? { duration: 0 } : SAUTI_SPRING}
+                      className="absolute inset-0 rounded-xl bg-[#245C45]"
+                    />
+                  )}
+                  <Icon className="w-4 h-4 shrink-0 relative z-10" />
+                  <span className="relative z-10">{item.label}</span>
                 </Link>
               );
             })}
@@ -82,7 +92,7 @@ export function PortalLayout({
           <button
             type="button"
             onClick={handleSignOut}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C]"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-[#4A5851] hover:bg-[#245C45]/8 hover:text-[#17201C] transition-colors"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign out</span>

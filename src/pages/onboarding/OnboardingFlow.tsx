@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowRight, Check } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { apiFetch } from '../../services/api';
 import { AgeRange, CefrLevel, LearningEnvironment } from '../../types/sauti';
 import { CEFR_DESCRIPTIONS, ENVIRONMENTS } from '../../utils/environments';
+import { AnimatedProgressBar, SAUTI_EASE } from '../../components/motion/SautiMotion';
 
 const PLACEMENT_QUESTIONS = [
   {
@@ -70,6 +72,7 @@ export function OnboardingFlow() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, learnerProfile, setSession } = useAuthStore();
+  const reduced = useReducedMotion();
 
   const step = location.pathname.includes('assessment')
     ? 'assessment'
@@ -144,12 +147,14 @@ export function OnboardingFlow() {
     }
   };
 
+  const stepPct = step === 'profile' ? 33 : step === 'assessment' ? 67 : 100;
+
   return (
-    <div className="min-h-screen bg-[#FFF8ED] text-[#17201C] py-10 px-4">
+    <div className="min-h-screen bg-[#FFF8ED] bg-warm-grid text-[#17201C] py-10 px-4">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-4">
           <span className="font-display text-2xl font-bold text-[#245C45]">SAUTI</span>
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#4A5851]">
+          <div className="flex items-center gap-2 text-xs font-mono font-semibold text-[#4A5851]">
             <span className={step === 'profile' ? 'text-[#245C45]' : ''}>01. Profile</span>
             <span>·</span>
             <span className={step === 'assessment' ? 'text-[#245C45]' : ''}>02. Placement</span>
@@ -157,14 +162,25 @@ export function OnboardingFlow() {
             <span className={step === 'goals' ? 'text-[#245C45]' : ''}>03. Goals</span>
           </div>
         </div>
+        <div className="mb-8">
+          <AnimatedProgressBar value={stepPct} ariaLabel="Onboarding step progress" />
+        </div>
 
-        <div className="rounded-3xl bg-white border border-[#245C45]/12 p-7 sm:p-10">
+        <div className="rounded-3xl sauti-surface p-7 sm:p-10">
           {error && (
             <div className="mb-5 rounded-xl bg-[#F28B75]/15 border border-[#F28B75] p-3.5 text-sm">
               {error}
             </div>
           )}
 
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={step}
+              initial={reduced ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduced ? undefined : { opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: SAUTI_EASE }}
+            >
           {step === 'profile' && (
             <div className="space-y-6">
               <div>
@@ -414,6 +430,8 @@ export function OnboardingFlow() {
               </div>
             </div>
           )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     </div>

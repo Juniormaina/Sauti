@@ -14,6 +14,7 @@ import {
   saveOfflineLesson,
 } from '../../lib/offlineDb';
 import { useOfflineStore } from '../../stores/offlineStore';
+import { PageTransition } from '../../components/motion/SautiMotion';
 
 export function CourseDetailPage() {
   const { id } = useParams();
@@ -130,7 +131,7 @@ export function CourseDetailPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <PageTransition className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <Link
@@ -187,7 +188,7 @@ export function CourseDetailPage() {
         {data.modules.map((mod, idx) => (
           <section
             key={mod.id}
-            className="rounded-3xl bg-white border border-[#245C45]/12 p-6 sm:p-8 space-y-4"
+            className="rounded-3xl sauti-surface p-6 sm:p-8 space-y-4"
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
@@ -234,7 +235,7 @@ export function CourseDetailPage() {
           </section>
         ))}
       </div>
-    </div>
+    </PageTransition>
   );
 }
 
