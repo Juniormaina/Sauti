@@ -4,12 +4,14 @@ import { useAuthStore } from '../stores/authStore';
 export class ApiError extends Error {
   status: number;
   isNetworkError: boolean;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, status = 0, isNetworkError = false) {
+  constructor(message: string, status = 0, isNetworkError = false, retryAfterSeconds?: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.isNetworkError = isNetworkError;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -77,10 +79,25 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
       }
 
       if (!response.ok) {
+        const retryAfterHeader = response.headers.get('Retry-After');
+        let retryAfterSeconds: number | undefined;
+        if (retryAfterHeader) {
+          const parsedInt = Number(retryAfterHeader);
+          if (Number.isFinite(parsedInt) && parsedInt > 0) {
+            retryAfterSeconds = Math.ceil(parsedInt);
+          } else {
+            const parsedDate = Date.parse(retryAfterHeader);
+            if (!Number.isNaN(parsedDate)) {
+              const deltaSec = Math.ceil((parsedDate - Date.now()) / 1000);
+              if (deltaSec > 0) retryAfterSeconds = deltaSec;
+            }
+          }
+        }
         const apiErr = new ApiError(
           data?.error || `Request failed (${response.status})`,
           response.status,
-          false
+          false,
+          retryAfterSeconds
         );
         if (attempt < maxRetries && [502, 503, 504].includes(response.status)) {
           await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));

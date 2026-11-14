@@ -290,7 +290,7 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
           and(
             eq(learningAttempts.learnerId, learner.id),
             eq(learningAttempts.activityId, activity.id),
-            sql`${learningAttempts.answerJson}->>'clientAttemptId' = ${clientAttemptId}`
+            eq(learningAttempts.clientAttemptId, clientAttemptId)
           )
         )
         .limit(1);
@@ -427,6 +427,11 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
     const score = isCorrect ? activity.points : Math.round(activity.points * 0.25);
 
     const txResult = await db.transaction(async (tx) => {
+      // Serialize concurrent attempts for the same learner to prevent XP race conditions
+      await tx.execute(
+        sql`SELECT id FROM learner_profiles WHERE id = ${learner.id} FOR UPDATE`
+      );
+
       const priorMastered = await tx
         .select({ id: learningAttempts.id })
         .from(learningAttempts)
@@ -442,30 +447,86 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
       const alreadyMastered = priorMastered.length > 0;
       const xpAwarded = isCorrect && !alreadyMastered ? activity.points : 0;
 
-      await tx.insert(learningAttempts).values({
-        learnerId: learner.id,
-        lessonId: activity.lessonId,
-        activityId: activity.id,
-        answerJson: clientAttemptId ? { answer, clientAttemptId } : { answer },
-        isCorrect,
-        score,
-        xpAwarded,
-        feedback,
-      });
+      if (clientAttemptId) {
+        const inserted = await tx
+          .insert(learningAttempts)
+          .values({
+            learnerId: learner.id,
+            lessonId: activity.lessonId,
+            activityId: activity.id,
+            clientAttemptId,
+            answerJson: { answer, clientAttemptId },
+            isCorrect,
+            score,
+            xpAwarded,
+            feedback,
+          })
+          .onConflictDoNothing({
+            target: [
+              learningAttempts.learnerId,
+              learningAttempts.activityId,
+              learningAttempts.clientAttemptId,
+            ],
+          })
+          .returning();
+
+        if (inserted.length === 0) {
+          const [existing] = await tx
+            .select()
+            .from(learningAttempts)
+            .where(
+              and(
+                eq(learningAttempts.learnerId, learner.id),
+                eq(learningAttempts.activityId, activity.id),
+                eq(learningAttempts.clientAttemptId, clientAttemptId)
+              )
+            )
+            .limit(1);
+
+          return {
+            alreadyProcessed: true,
+            isCorrect: existing?.isCorrect ?? isCorrect,
+            score: existing?.score ?? score,
+            xpAwarded: 0,
+            alreadyMastered: existing?.isCorrect ?? alreadyMastered,
+            feedback: existing?.feedback ?? feedback,
+          };
+        }
+      } else {
+        await tx.insert(learningAttempts).values({
+          learnerId: learner.id,
+          lessonId: activity.lessonId,
+          activityId: activity.id,
+          clientAttemptId: null,
+          answerJson: { answer },
+          isCorrect,
+          score,
+          xpAwarded,
+          feedback,
+        });
+      }
 
       if (xpAwarded > 0) {
         await awardXpAtomically(tx, learner.id, xpAwarded);
       }
 
-      return { xpAwarded, alreadyMastered };
+      return {
+        alreadyProcessed: false,
+        isCorrect,
+        score,
+        xpAwarded,
+        alreadyMastered,
+        feedback,
+      };
     });
 
     return res.json({
-      isCorrect,
-      score,
+      ...(txResult.alreadyProcessed ? { alreadyProcessed: true } : {}),
+      isCorrect: txResult.isCorrect,
+      score: txResult.score,
       xpAwarded: txResult.xpAwarded,
       alreadyMastered: txResult.alreadyMastered,
-      feedback,
+      feedback: txResult.feedback,
     });
   } catch {
     return res.status(500).json({ error: 'Unable to evaluate activity.' });

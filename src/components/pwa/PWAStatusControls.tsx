@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
+  AlertTriangle,
   CheckCircle2,
   Download,
+  LogIn,
   RefreshCw,
   Share,
   Wifi,
@@ -159,78 +162,159 @@ export function ConnectivityBanner() {
     isOnline,
     lowBandwidthMode,
     pendingSyncCount,
+    queuedItems,
+    needsAuthRecovery,
     isSyncing,
     syncMessage,
     syncError,
     setLowBandwidthMode,
     syncPendingQueue,
+    retryQueueItem,
+    dismissQueueItem,
   } = useOfflineStore();
 
+  const attentionItems = queuedItems.filter((q) => q.status === 'needs_resolution');
+  const waitingCount = queuedItems.filter((q) => q.status !== 'needs_resolution').length;
+
   return (
-    <div className="mb-6 rounded-2xl border border-[#245C45]/15 bg-[#FDF6EA] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-      <div className="flex flex-wrap items-center gap-3">
-        <span
-          className={`inline-flex items-center gap-1.5 font-semibold ${
-            isOnline ? 'text-[#245C45]' : 'text-[#B43C25]'
-          }`}
-        >
-          {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-          <span>{isOnline ? 'Online' : 'Offline mode'}</span>
-        </span>
-
-        {!isOnline && (
-          <span className="text-[#4A5851]">
-            Downloaded lessons, offline listening, and local recordings remain available. Progress queues safely.
+    <div className="mb-6 space-y-2.5">
+      <div className="rounded-2xl border border-[#245C45]/15 bg-[#FDF6EA] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <span
+            className={`inline-flex items-center gap-1.5 font-semibold ${
+              isOnline ? 'text-[#245C45]' : 'text-[#B43C25]'
+            }`}
+          >
+            {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+            <span>{isOnline ? 'Online' : 'Offline mode'}</span>
           </span>
-        )}
 
-        {pendingSyncCount > 0 && (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F6C96B]/35 text-[#17201C] font-semibold tabular-nums">
-            <span>
-              {pendingSyncCount} update{pendingSyncCount === 1 ? '' : 's'} queued
+          {!isOnline && (
+            <span className="text-[#4A5851]">
+              Downloaded lessons, offline listening, and local recordings remain available. Progress queues safely (unverified until synced).
             </span>
-          </span>
-        )}
+          )}
 
-        {syncMessage && pendingSyncCount === 0 && (
-          <span className="inline-flex items-center gap-1 text-[#245C45]">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>{syncMessage}</span>
-          </span>
-        )}
+          {pendingSyncCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F6C96B]/35 text-[#17201C] font-semibold tabular-nums">
+              <span>
+                {waitingCount > 0
+                  ? `${waitingCount} waiting to sync`
+                  : `${pendingSyncCount} queued item${pendingSyncCount === 1 ? '' : 's'}`}
+              </span>
+            </span>
+          )}
 
-        {syncError && <span className="text-[#B43C25]">{syncError}</span>}
-      </div>
+          {syncMessage && pendingSyncCount === 0 && (
+            <span className="inline-flex items-center gap-1 text-[#245C45] font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{syncMessage}</span>
+            </span>
+          )}
 
-      <div className="flex flex-wrap items-center gap-2 shrink-0">
-        {isOnline && pendingSyncCount > 0 && (
+          {syncError && !needsAuthRecovery && attentionItems.length === 0 && (
+            <span className="text-[#B43C25]">{syncError}</span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {isOnline && pendingSyncCount > 0 && !needsAuthRecovery && (
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={() => void syncPendingQueue({ forceRetryAll: true })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#245C45] text-[#FFF8ED] font-semibold hover:bg-[#194231] disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync now'}</span>
+            </button>
+          )}
+
           <button
             type="button"
-            disabled={isSyncing}
-            onClick={() => void syncPendingQueue()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#245C45] text-[#FFF8ED] font-semibold hover:bg-[#194231] disabled:opacity-60"
+            onClick={() => setLowBandwidthMode(!lowBandwidthMode)}
+            aria-pressed={lowBandwidthMode}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+              lowBandwidthMode
+                ? 'bg-[#245C45] text-[#FFF8ED] border-[#245C45]'
+                : 'bg-white text-[#4A5851] border-[#245C45]/20 hover:text-[#17201C]'
+            }`}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? 'Syncing...' : 'Sync now'}</span>
+            <Zap className="w-3.5 h-3.5" />
+            <span>Data-Saving: {lowBandwidthMode ? 'On' : 'Off'}</span>
           </button>
-        )}
 
-        <button
-          type="button"
-          onClick={() => setLowBandwidthMode(!lowBandwidthMode)}
-          aria-pressed={lowBandwidthMode}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
-            lowBandwidthMode
-              ? 'bg-[#245C45] text-[#FFF8ED] border-[#245C45]'
-              : 'bg-white text-[#4A5851] border-[#245C45]/20 hover:text-[#17201C]'
-          }`}
-        >
-          <Zap className="w-3.5 h-3.5" />
-          <span>Data-Saving: {lowBandwidthMode ? 'On' : 'Off'}</span>
-        </button>
-
-        <PWAInstallButton variant="compact" />
+          <PWAInstallButton variant="compact" />
+        </div>
       </div>
+
+      {needsAuthRecovery && (
+        <div className="rounded-2xl border border-[#F28B75] bg-[#F28B75]/12 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5 text-[#17201C]">
+            <AlertTriangle className="w-4 h-4 text-[#B43C25] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-[#B43C25]">Sign in required to finish syncing</p>
+              <p className="text-[#4A5851]">
+                Your queued offline progress is safely preserved in this browser. Sign in again to
+                verify and sync it without losing your work.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#245C45] text-[#FFF8ED] font-semibold shrink-0 hover:bg-[#194231]"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Sign in to resume sync</span>
+          </Link>
+        </div>
+      )}
+
+      {attentionItems.length > 0 && (
+        <div className="rounded-2xl border border-[#F28B75] bg-white px-4 py-3 space-y-2 text-xs">
+          <div className="flex items-center gap-2 font-semibold text-[#B43C25]">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              {attentionItems.length} queued update{attentionItems.length === 1 ? '' : 's'} kept locally
+              and awaiting review
+            </span>
+          </div>
+          <div className="space-y-2">
+            {attentionItems.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl bg-[#FFF8ED] border border-[#245C45]/12 px-3 py-2"
+              >
+                <div>
+                  <p className="font-semibold text-[#17201C]">{item.label}</p>
+                  <p className="text-[#B43C25]">
+                    {item.lastError || `Server returned ${item.lastStatusCode || 'an error'}.`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {isOnline && (
+                    <button
+                      type="button"
+                      disabled={isSyncing}
+                      onClick={() => void retryQueueItem(item.id)}
+                      className="px-2.5 py-1 rounded-lg bg-[#245C45] text-[#FFF8ED] font-semibold hover:bg-[#194231] disabled:opacity-50"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void dismissQueueItem(item.id)}
+                    className="px-2.5 py-1 rounded-lg border border-[#245C45]/20 text-[#4A5851] font-semibold hover:text-[#17201C]"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

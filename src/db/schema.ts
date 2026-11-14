@@ -205,22 +205,33 @@ export const assessments = pgTable('assessments', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const learningAttempts = pgTable('learning_attempts', {
-  id: serial('id').primaryKey(),
-  learnerId: integer('learner_id')
-    .references(() => learnerProfiles.id, { onDelete: 'cascade' })
-    .notNull(),
-  lessonId: integer('lesson_id')
-    .references(() => lessons.id, { onDelete: 'cascade' })
-    .notNull(),
-  activityId: integer('activity_id').references(() => activities.id, { onDelete: 'set null' }),
-  answerJson: jsonb('answer_json').$type<Record<string, unknown>>().notNull(),
-  isCorrect: boolean('is_correct').notNull().default(false),
-  score: integer('score').notNull().default(0),
-  xpAwarded: integer('xp_awarded').notNull().default(0),
-  feedback: text('feedback'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+export const learningAttempts = pgTable(
+  'learning_attempts',
+  {
+    id: serial('id').primaryKey(),
+    learnerId: integer('learner_id')
+      .references(() => learnerProfiles.id, { onDelete: 'cascade' })
+      .notNull(),
+    lessonId: integer('lesson_id')
+      .references(() => lessons.id, { onDelete: 'cascade' })
+      .notNull(),
+    activityId: integer('activity_id').references(() => activities.id, { onDelete: 'set null' }),
+    clientAttemptId: text('client_attempt_id'),
+    answerJson: jsonb('answer_json').$type<Record<string, unknown>>().notNull(),
+    isCorrect: boolean('is_correct').notNull().default(false),
+    score: integer('score').notNull().default(0),
+    xpAwarded: integer('xp_awarded').notNull().default(0),
+    feedback: text('feedback'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('learning_attempts_learner_activity_client_attempt_idx').on(
+      table.learnerId,
+      table.activityId,
+      table.clientAttemptId
+    ),
+  ]
+);
 
 export const learnerProgress = pgTable(
   'learner_progress',

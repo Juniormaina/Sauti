@@ -27,7 +27,7 @@ export function LessonDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, learnerProfile, activeChildId } = useAuthStore();
-  const { isOnline, queueProgressUpdate } = useOfflineStore();
+  const { isOnline, queueProgressUpdate, verifiedByEndpoint } = useOfflineStore();
   const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
   const { speak, isSpeaking } = useSpeechPlayback();
 
@@ -35,12 +35,13 @@ export function LessonDetailPage() {
   const [moduleData, setModuleData] = useState<Module | null>(null);
   const [course, setCourse] = useState<Course | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [completedActivityIds, setCompletedActivityIds] = useState<number[]>([]);
+  const [locallyAttemptedActivityIds, setLocallyAttemptedActivityIds] = useState<number[]>([]);
+  const [verifiedActivityIds, setVerifiedActivityIds] = useState<number[]>([]);
   const [lessonCompleted, setLessonCompleted] = useState<{
+    verificationStatus: 'verified' | 'queued_offline';
     xpEarned?: number;
     alreadyCompleted?: boolean;
     newlyEarnedAchievements?: string[];
-    queuedOffline?: boolean;
   } | null>(null);
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
@@ -51,6 +52,35 @@ export function LessonDetailPage() {
   const isKids =
     learnerProfile?.environment === 'little_voices' ||
     learnerProfile?.environment === 'young_explorers';
+
+  const attemptedActivityCount = new Set([
+    ...locallyAttemptedActivityIds,
+    ...verifiedActivityIds,
+  ]).size;
+  const queuedOnlyCount = locallyAttemptedActivityIds.filter(
+    (actId) => !verifiedActivityIds.includes(actId)
+  ).length;
+
+  useEffect(() => {
+    setLocallyAttemptedActivityIds([]);
+    setVerifiedActivityIds([]);
+    setLessonCompleted(null);
+    setCompleteError(null);
+  }, [id, scopeKey]);
+
+  useEffect(() => {
+    if (!lesson || lessonCompleted?.verificationStatus !== 'queued_offline') return;
+    const syncedComplete =
+      verifiedByEndpoint[`${scopeKey}::/api/learning/lessons/${lesson.id}/complete`];
+    if (syncedComplete && syncedComplete.completed) {
+      setLessonCompleted({
+        verificationStatus: 'verified',
+        xpEarned: syncedComplete.xpEarned,
+        alreadyCompleted: syncedComplete.alreadyCompleted,
+        newlyEarnedAchievements: syncedComplete.newlyEarnedAchievements,
+      });
+    }
+  }, [verifiedByEndpoint, lesson, lessonCompleted, scopeKey]);
 
   useEffect(() => {
     const lessonIdNum = Number(id);
@@ -112,7 +142,7 @@ export function LessonDetailPage() {
     const targetLearnerId = activeChildId ?? learnerProfile?.id ?? null;
 
     if (!isOnline) {
-      if (activities.length > 0 && completedActivityIds.length < activities.length) {
+      if (activities.length > 0 && attemptedActivityCount < activities.length) {
         setCompleteError(
           'Attempt every activity in this lesson first before queueing lesson completion.'
         );
@@ -131,7 +161,7 @@ export function LessonDetailPage() {
         },
         label: `Complete lesson: ${lesson.title}`,
       });
-      setLessonCompleted({ queuedOffline: true });
+      setLessonCompleted({ verificationStatus: 'queued_offline' });
       setCompleting(false);
       return;
     }
@@ -144,7 +174,12 @@ export function LessonDetailPage() {
           minutesSpent: lesson.durationMinutes,
         }),
       });
-      setLessonCompleted(res);
+      setLessonCompleted({
+        verificationStatus: 'verified',
+        xpEarned: res.xpEarned,
+        alreadyCompleted: res.alreadyCompleted,
+        newlyEarnedAchievements: res.newlyEarnedAchievements,
+      });
     } catch (err: any) {
       if (isOfflineOrNetworkError(err)) {
         await queueProgressUpdate({
@@ -159,7 +194,7 @@ export function LessonDetailPage() {
           },
           label: `Complete lesson: ${lesson.title}`,
         });
-        setLessonCompleted({ queuedOffline: true });
+        setLessonCompleted({ verificationStatus: 'queued_offline' });
       } else {
         setCompleteError(err.message || 'Complete all activities before finishing this lesson.');
       }
@@ -309,22 +344,30 @@ export function LessonDetailPage() {
 
       {/* Interactive Activities */}
       <section className="space-y-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-display text-2xl font-bold">Interactive Practice</h2>
           <span className="text-xs font-mono text-[#4A5851] tabular-nums">
-            {completedActivityIds.length} / {activities.length} attempted
+            {verifiedActivityIds.length} verified
+            {queuedOnlyCount > 0 ? ` · ${queuedOnlyCount} queued offline` : ''} / {activities.length}
           </span>
         </div>
 
         {activities.map((act) => (
           <ActivityRunner
-            key={act.id}
+            key={`${act.id}-${scopeKey}`}
             activity={act}
             learnerId={activeChildId || undefined}
             isKids={isKids}
-            onAttempted={() =>
-              setCompletedActivityIds((prev) => (prev.includes(act.id) ? prev : [...prev, act.id]))
-            }
+            onAttempted={(outcome) => {
+              if (outcome.verificationStatus === 'verified') {
+                setVerifiedActivityIds((prev) => (prev.includes(act.id) ? prev : [...prev, act.id]));
+                setLocallyAttemptedActivityIds((prev) => prev.filter((id) => id !== act.id));
+              } else if (outcome.verificationStatus === 'queued_offline') {
+                setLocallyAttemptedActivityIds((prev) =>
+                  prev.includes(act.id) ? prev : [...prev, act.id]
+                );
+              }
+            }}
           />
         ))}
       </section>
@@ -334,23 +377,23 @@ export function LessonDetailPage() {
         {lessonCompleted ? (
           <div className="space-y-2">
             <div className="flex items-center gap-2 font-display text-2xl font-bold">
-              {lessonCompleted.queuedOffline ? (
+              {lessonCompleted.verificationStatus === 'queued_offline' ? (
                 <Clock className="w-6 h-6 text-[#F6C96B]" />
               ) : (
                 <CheckCircle2 className="w-6 h-6 text-[#F6C96B]" />
               )}
               <span>
-                {lessonCompleted.queuedOffline
-                  ? 'Lesson completion saved offline'
+                {lessonCompleted.verificationStatus === 'queued_offline'
+                  ? 'Attempted locally · Waiting to sync (Unverified)'
                   : lessonCompleted.alreadyCompleted
-                  ? 'Lesson practice updated'
-                  : `Lesson completed (+${lessonCompleted.xpEarned} XP)`}
+                  ? 'Verified by SAUTI · Lesson practice updated'
+                  : `Verified by SAUTI · Lesson completed (+${lessonCompleted.xpEarned ?? 0} XP)`}
               </span>
             </div>
-            {lessonCompleted.queuedOffline && (
+            {lessonCompleted.verificationStatus === 'queued_offline' && (
               <p className="text-sm text-[#FFF8ED]/85">
-                Your completion is queued locally and will verify XP and streaks automatically when
-                internet connectivity returns.
+                Your completion is saved locally without unverified XP or streak credit. Once online,
+                SAUTI will verify your activities and award earned XP automatically.
               </p>
             )}
             {(lessonCompleted.newlyEarnedAchievements?.length ?? 0) > 0 && (
@@ -365,8 +408,8 @@ export function LessonDetailPage() {
             <h3 className="font-display text-xl font-bold">Ready to finish this lesson?</h3>
             <p className="text-sm text-[#FFF8ED]/80">
               {isOnline
-                ? 'Completing updates your streak, progress bars, and milestone rewards.'
-                : 'Offline mode: completing queues your progress locally to sync when reconnected.'}
+                ? 'Completing verifies all activities and updates your streak, progress bars, and milestone rewards.'
+                : 'Offline mode: completing queues your lesson attempt locally to verify when reconnected.'}
             </p>
             {completeError && <p className="text-xs text-[#F6C96B] mt-2">{completeError}</p>}
           </div>
@@ -387,7 +430,7 @@ export function LessonDetailPage() {
             onClick={() => void handleCompleteLesson()}
             className="px-6 py-3 rounded-xl bg-[#F6C96B] text-[#17201C] font-semibold text-sm hover:bg-[#f8d487]"
           >
-            {completing ? 'Saving progress...' : 'Complete lesson'}
+            {completing ? 'Saving progress...' : isOnline ? 'Complete lesson' : 'Queue completion offline'}
           </button>
         )}
       </section>

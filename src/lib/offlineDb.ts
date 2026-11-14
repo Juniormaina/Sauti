@@ -40,6 +40,7 @@ export interface OfflineListeningRecord {
 }
 
 export type SyncQueueKind = 'activity_attempt' | 'lesson_complete';
+export type SyncItemStatus = 'pending' | 'auth_required' | 'needs_resolution';
 
 export interface SyncQueueItem {
   id: string;
@@ -51,7 +52,10 @@ export interface SyncQueueItem {
   label: string;
   createdAt: string;
   retryCount: number;
+  status?: SyncItemStatus;
+  lastStatusCode?: number;
   lastError?: string;
+  nextRetryAt?: string;
 }
 
 export interface LocalRecordingItem {

@@ -9,7 +9,8 @@ import {
   SyncQueueKind,
   updateSyncItem,
 } from '../lib/offlineDb';
-import { apiFetch, isOfflineOrNetworkError } from '../services/api';
+import { runScopedQueueSync } from '../lib/offlineSyncEngine';
+import { apiFetch } from '../services/api';
 
 const LOW_BANDWIDTH_KEY = 'sauti_low_bandwidth_mode';
 
@@ -33,11 +34,16 @@ export function createClientAttemptId(): string {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+let inFlightSyncPromise: Promise<{ synced: number; remaining: number }> | null = null;
+
 interface OfflineState {
   isOnline: boolean;
   lowBandwidthMode: boolean;
   activeScopeKey: string | null;
   pendingSyncCount: number;
+  queuedItems: SyncQueueItem[];
+  needsAuthRecovery: boolean;
+  verifiedByEndpoint: Record<string, any>;
   isSyncing: boolean;
   lastSyncedAt: string | null;
   syncMessage: string | null;
@@ -54,16 +60,39 @@ interface OfflineState {
     payload: Record<string, unknown>;
     label: string;
   }) => Promise<void>;
-  syncPendingQueue: (options?: { silent?: boolean }) => Promise<{ synced: number; remaining: number }>;
+  syncPendingQueue: (options?: {
+    silent?: boolean;
+    forceRetryAll?: boolean;
+  }) => Promise<{ synced: number; remaining: number }>;
+  retryQueueItem: (id: string) => Promise<void>;
+  dismissQueueItem: (id: string) => Promise<void>;
   clearPendingQueue: () => Promise<void>;
   clearActiveScopeData: () => Promise<void>;
 }
+
+const syncStorageAdapter = {
+  list: listSyncQueue,
+  update: updateSyncItem,
+  remove: removeSyncItem,
+};
+
+const syncTransportAdapter = {
+  submit: (endpoint: string, payload: Record<string, unknown>) =>
+    apiFetch(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 25000,
+    }),
+};
 
 export const useOfflineStore = create<OfflineState>((set, get) => ({
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   lowBandwidthMode: detectInitialLowBandwidth(),
   activeScopeKey: null,
   pendingSyncCount: 0,
+  queuedItems: [],
+  needsAuthRecovery: false,
+  verifiedByEndpoint: {},
   isSyncing: false,
   lastSyncedAt: null,
   syncMessage: null,
@@ -79,28 +108,43 @@ export const useOfflineStore = create<OfflineState>((set, get) => ({
   },
 
   setActiveScopeKey: async (scopeKey) => {
-    set({ activeScopeKey: scopeKey, syncError: null, syncMessage: null });
+    set({
+      activeScopeKey: scopeKey,
+      syncError: null,
+      syncMessage: null,
+    });
     if (!scopeKey) {
-      set({ pendingSyncCount: 0 });
+      set({ pendingSyncCount: 0, queuedItems: [], needsAuthRecovery: false });
       return;
     }
     try {
       const queue = await listSyncQueue(scopeKey);
-      set({ pendingSyncCount: queue.length });
+      if (get().activeScopeKey !== scopeKey) return;
+      set({
+        queuedItems: queue,
+        pendingSyncCount: queue.length,
+        needsAuthRecovery: queue.some((q) => q.status === 'auth_required'),
+      });
     } catch {
-      set({ pendingSyncCount: 0 });
+      if (get().activeScopeKey !== scopeKey) return;
+      set({ queuedItems: [], pendingSyncCount: 0, needsAuthRecovery: false });
     }
   },
 
   refreshSyncCount: async () => {
     const scopeKey = get().activeScopeKey;
     if (!scopeKey) {
-      set({ pendingSyncCount: 0 });
+      set({ pendingSyncCount: 0, queuedItems: [], needsAuthRecovery: false });
       return;
     }
     try {
       const queue = await listSyncQueue(scopeKey);
-      set({ pendingSyncCount: queue.length });
+      if (get().activeScopeKey !== scopeKey) return;
+      set({
+        queuedItems: queue,
+        pendingSyncCount: queue.length,
+        needsAuthRecovery: queue.some((q) => q.status === 'auth_required'),
+      });
     } catch {
       // ignore
     }
@@ -117,99 +161,172 @@ export const useOfflineStore = create<OfflineState>((set, get) => ({
       label: input.label,
       createdAt: new Date().toISOString(),
       retryCount: 0,
+      status: 'pending',
     };
     await enqueueSyncItem(item);
     await get().refreshSyncCount();
   },
 
   syncPendingQueue: async (options) => {
-    const { activeScopeKey, isSyncing, isOnline } = get();
-    if (!activeScopeKey || isSyncing || !isOnline) {
+    if (inFlightSyncPromise) {
+      return inFlightSyncPromise;
+    }
+
+    const targetScopeKey = get().activeScopeKey;
+    const currentlyOnline =
+      get().isOnline && (typeof navigator === 'undefined' || navigator.onLine);
+    if (!targetScopeKey || !currentlyOnline) {
       return { synced: 0, remaining: get().pendingSyncCount };
     }
 
-    set({ isSyncing: true, syncError: null });
-    if (!options?.silent) {
-      set({ syncMessage: null });
+    const runPromise = (async () => {
+      set({ isSyncing: true, syncError: null });
+      if (!options?.silent) {
+        set({ syncMessage: null });
+      }
+
+      try {
+        const result = await runScopedQueueSync({
+          targetScopeKey,
+          getActiveScopeKey: () => get().activeScopeKey,
+          isOnline: () =>
+            get().isOnline && (typeof navigator === 'undefined' || navigator.onLine),
+          storage: syncStorageAdapter,
+          transport: syncTransportAdapter,
+          forceRetryAll: options?.forceRetryAll ?? false,
+        });
+
+        // If user switched learner/account mid-sync, do not touch the new scope's state
+        if (result.abortedForScopeChange || get().activeScopeKey !== targetScopeKey) {
+          return { synced: result.synced, remaining: result.remaining };
+        }
+
+        const remainingList = await listSyncQueue(targetScopeKey);
+        if (get().activeScopeKey !== targetScopeKey) {
+          return { synced: result.synced, remaining: result.remaining };
+        }
+
+        const nextVerified = { ...get().verifiedByEndpoint };
+        for (const entry of result.verifiedItems) {
+          nextVerified[`${targetScopeKey}::${entry.item.endpoint}`] = entry.response;
+          nextVerified[`${targetScopeKey}::attempt::${entry.item.id}`] = entry.response;
+        }
+
+        set({
+          queuedItems: remainingList,
+          pendingSyncCount: remainingList.length,
+          needsAuthRecovery: result.needsAuthRecovery,
+          verifiedByEndpoint: nextVerified,
+          lastSyncedAt: result.synced > 0 ? new Date().toISOString() : get().lastSyncedAt,
+          syncMessage:
+            result.synced > 0
+              ? result.syncMessage
+              : options?.silent
+              ? get().syncMessage
+              : null,
+          syncError: result.syncError,
+        });
+
+        return { synced: result.synced, remaining: remainingList.length };
+      } finally {
+        inFlightSyncPromise = null;
+        set({ isSyncing: false });
+      }
+    })();
+
+    inFlightSyncPromise = runPromise;
+    return runPromise;
+  },
+
+  retryQueueItem: async (id) => {
+    if (inFlightSyncPromise) {
+      await inFlightSyncPromise.catch(() => {});
+    }
+    const targetScopeKey = get().activeScopeKey;
+    const currentlyOnline =
+      get().isOnline && (typeof navigator === 'undefined' || navigator.onLine);
+    if (!targetScopeKey || !currentlyOnline) return;
+
+    const existing = get().queuedItems.find((q) => q.id === id);
+    if (existing) {
+      await updateSyncItem({
+        ...existing,
+        status: 'pending',
+        nextRetryAt: undefined,
+      });
     }
 
-    let synced = 0;
+    set({ isSyncing: true, syncError: null });
     try {
-      const queue = await listSyncQueue(activeScopeKey);
-      if (queue.length === 0) {
-        set({ pendingSyncCount: 0, isSyncing: false });
-        return { synced: 0, remaining: 0 };
-      }
-
-      for (const item of queue) {
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          set({ isOnline: false });
-          break;
-        }
-        try {
-          await apiFetch(item.endpoint, {
-            method: 'POST',
-            body: JSON.stringify(item.payload),
-            timeoutMs: 25000,
-          });
-          await removeSyncItem(item.id);
-          synced += 1;
-        } catch (err: any) {
-          if (isOfflineOrNetworkError(err)) {
-            await updateSyncItem({
-              ...item,
-              retryCount: item.retryCount + 1,
-              lastError: 'Waiting for internet connection',
-            });
-            break;
-          }
-
-          const status = typeof err?.status === 'number' ? err.status : 0;
-          if (status >= 400 && status < 500 && status !== 429 && status !== 408) {
-            // Permanent client error (e.g. validation/permission/already invalid) — remove from queue cleanly
-            await removeSyncItem(item.id);
-            set({
-              syncError: `Removed "${item.label}" from sync queue: ${err?.message || 'Server rejected entry.'}`,
-            });
-          } else {
-            await updateSyncItem({
-              ...item,
-              retryCount: item.retryCount + 1,
-              lastError: err?.message || 'Temporary server error',
-            });
-            set({ syncError: err?.message || 'Some queued updates will retry automatically.' });
-            break;
-          }
-        }
-      }
-
-      const remainingList = await listSyncQueue(activeScopeKey);
-      set({
-        pendingSyncCount: remainingList.length,
-        lastSyncedAt: synced > 0 ? new Date().toISOString() : get().lastSyncedAt,
-        syncMessage:
-          synced > 0
-            ? `Synchronised ${synced} offline update${synced === 1 ? '' : 's'}.`
-            : get().syncMessage,
+      const result = await runScopedQueueSync({
+        targetScopeKey,
+        getActiveScopeKey: () => get().activeScopeKey,
+        isOnline: () =>
+          get().isOnline && (typeof navigator === 'undefined' || navigator.onLine),
+        storage: syncStorageAdapter,
+        transport: syncTransportAdapter,
+        forceRetryAll: true,
+        onlyItemId: id,
       });
-      return { synced, remaining: remainingList.length };
+
+      if (result.abortedForScopeChange || get().activeScopeKey !== targetScopeKey) {
+        return;
+      }
+
+      const remainingList = await listSyncQueue(targetScopeKey);
+      if (get().activeScopeKey !== targetScopeKey) return;
+
+      const nextVerified = { ...get().verifiedByEndpoint };
+      for (const entry of result.verifiedItems) {
+        nextVerified[`${targetScopeKey}::${entry.item.endpoint}`] = entry.response;
+        nextVerified[`${targetScopeKey}::attempt::${entry.item.id}`] = entry.response;
+      }
+
+      set({
+        queuedItems: remainingList,
+        pendingSyncCount: remainingList.length,
+        needsAuthRecovery: remainingList.some((q) => q.status === 'auth_required'),
+        verifiedByEndpoint: nextVerified,
+        lastSyncedAt: result.synced > 0 ? new Date().toISOString() : get().lastSyncedAt,
+        syncMessage: result.syncMessage,
+        syncError: result.syncError,
+      });
     } finally {
       set({ isSyncing: false });
     }
+  },
+
+  dismissQueueItem: async (id) => {
+    await removeSyncItem(id);
+    await get().refreshSyncCount();
+    set({ syncError: null });
   },
 
   clearPendingQueue: async () => {
     const scopeKey = get().activeScopeKey;
     if (!scopeKey) return;
     await clearSyncQueueForScope(scopeKey);
-    set({ pendingSyncCount: 0, syncMessage: 'Cleared pending offline sync queue.', syncError: null });
+    set({
+      queuedItems: [],
+      pendingSyncCount: 0,
+      needsAuthRecovery: false,
+      syncMessage: 'Cleared pending offline sync queue.',
+      syncError: null,
+    });
   },
 
   clearActiveScopeData: async () => {
     const scopeKey = get().activeScopeKey;
     if (!scopeKey) return;
     await clearScopeOfflineData(scopeKey);
-    set({ pendingSyncCount: 0, syncMessage: 'Cleared locally stored learner data.', syncError: null });
+    set({
+      queuedItems: [],
+      pendingSyncCount: 0,
+      needsAuthRecovery: false,
+      verifiedByEndpoint: {},
+      syncMessage: 'Cleared locally stored learner data.',
+      syncError: null,
+    });
   },
 }));
 

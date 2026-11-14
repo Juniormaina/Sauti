@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   Clock,
@@ -15,16 +15,19 @@ import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { useAuthStore } from '../../stores/authStore';
 import { buildOfflineScopeKey } from '../../lib/offlineDb';
+import {
+  ActivityOutcome,
+  buildOfflineActivityOutcome,
+  buildServerVerifiedActivityOutcome,
+} from '../../lib/offlineSyncEngine';
 import { createClientAttemptId, useOfflineStore } from '../../stores/offlineStore';
 
 interface ActivityRunnerProps {
   activity: Activity;
   learnerId?: number;
   isKids?: boolean;
-  onAttempted: (result: { isCorrect: boolean; score: number; feedback: string }) => void;
+  onAttempted: (result: ActivityOutcome) => void;
 }
-
-const AI_EVALUATED_TYPES = new Set(['writing', 'conversation_sim', 'role_play']);
 
 export function ActivityRunner({
   activity,
@@ -34,7 +37,7 @@ export function ActivityRunner({
 }: ActivityRunnerProps) {
   const payload = activity.payloadJson || {};
   const { user, learnerProfile } = useAuthStore();
-  const { isOnline, queueProgressUpdate } = useOfflineStore();
+  const { isOnline, queueProgressUpdate, verifiedByEndpoint } = useOfflineStore();
   const scopeKey = buildOfflineScopeKey(user?.id, learnerId ?? learnerProfile?.id ?? null);
 
   const { speak, isSpeaking } = useSpeechPlayback();
@@ -48,12 +51,24 @@ export function ActivityRunner({
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeNote, setTranscribeNote] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{
-    isCorrect: boolean;
-    score: number;
-    feedback: string;
-    queuedOffline?: boolean;
-  } | null>(null);
+  const [outcome, setOutcome] = useState<ActivityOutcome | null>(null);
+
+  const onAttemptedRef = useRef(onAttempted);
+  onAttemptedRef.current = onAttempted;
+
+  useEffect(() => {
+    if (outcome?.verificationStatus !== 'queued_offline') return;
+    const syncedRes =
+      (outcome.clientAttemptId
+        ? verifiedByEndpoint[`${scopeKey}::attempt::${outcome.clientAttemptId}`]
+        : undefined) ??
+      verifiedByEndpoint[`${scopeKey}::/api/learning/activities/${activity.id}/attempt`];
+    if (syncedRes && typeof syncedRes.isCorrect === 'boolean') {
+      const verified = buildServerVerifiedActivityOutcome(syncedRes, outcome.clientAttemptId);
+      setOutcome(verified);
+      onAttemptedRef.current(verified);
+    }
+  }, [verifiedByEndpoint, outcome, scopeKey, activity.id]);
 
   const queueAttemptOffline = async (answerValue: unknown, clientAttemptId: string) => {
     await queueProgressUpdate({
@@ -70,19 +85,9 @@ export function ActivityRunner({
       label: `Activity #${activity.id} (${activity.type.replace(/_/g, ' ')})`,
     });
 
-    const isAiType = AI_EVALUATED_TYPES.has(activity.type);
-    const offlineFeedback = isAiType
-      ? 'Saved offline — cloud AI feedback and XP verification require an internet connection and will run automatically when reconnected.'
-      : 'Saved offline — your answer is queued safely and will sync XP and progress when you reconnect.';
-
-    const queuedRes = {
-      isCorrect: true,
-      score: 0,
-      feedback: offlineFeedback,
-      queuedOffline: true,
-    };
-    setResult(queuedRes);
-    onAttempted(queuedRes);
+    const queuedRes = buildOfflineActivityOutcome(activity.type, clientAttemptId);
+    setOutcome(queuedRes);
+    onAttemptedRef.current(queuedRes);
   };
 
   const submitAnswer = async (answerValue: unknown) => {
@@ -96,22 +101,29 @@ export function ActivityRunner({
     }
 
     try {
-      const res = await apiFetch<{ isCorrect: boolean; score: number; feedback: string }>(
-        `/api/learning/activities/${activity.id}/attempt`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ answer: answerValue, learnerId, clientAttemptId }),
-        }
-      );
-      setResult(res);
-      onAttempted(res);
+      const res = await apiFetch<{
+        isCorrect: boolean;
+        score: number;
+        xpAwarded?: number;
+        alreadyProcessed?: boolean;
+        alreadyMastered?: boolean;
+        feedback: string;
+      }>(`/api/learning/activities/${activity.id}/attempt`, {
+        method: 'POST',
+        body: JSON.stringify({ answer: answerValue, learnerId, clientAttemptId }),
+      });
+      const verified = buildServerVerifiedActivityOutcome(res, clientAttemptId);
+      setOutcome(verified);
+      onAttemptedRef.current(verified);
     } catch (err: any) {
       if (isOfflineOrNetworkError(err)) {
         await queueAttemptOffline(answerValue, clientAttemptId);
       } else {
-        setResult({
-          isCorrect: false,
-          score: 0,
+        setOutcome({
+          verificationStatus: 'error',
+          isCorrect: null,
+          score: null,
+          xpAwarded: null,
           feedback: err.message || 'Unable to submit answer.',
         });
       }
@@ -498,33 +510,44 @@ export function ActivityRunner({
         </div>
       )}
 
-      {/* Feedback Banner */}
-      {result && (
+      {/* Feedback & Verification Banner */}
+      {outcome && (
         <div
           className={`rounded-xl p-4 border flex items-start gap-3 text-sm ${
-            result.queuedOffline
+            outcome.verificationStatus === 'queued_offline'
               ? 'bg-[#FDF3E3] border-[#F6C96B] text-[#17201C]'
-              : result.isCorrect
+              : outcome.verificationStatus === 'verified' && outcome.isCorrect
               ? 'bg-[#245C45]/10 border-[#245C45]/30 text-[#17201C]'
               : 'bg-[#F28B75]/15 border-[#F28B75] text-[#17201C]'
           }`}
         >
-          {result.queuedOffline ? (
+          {outcome.verificationStatus === 'queued_offline' ? (
             <Clock className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
-          ) : result.isCorrect ? (
+          ) : outcome.verificationStatus === 'verified' && outcome.isCorrect ? (
             <CheckCircle2 className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
           ) : (
             <XCircle className="w-5 h-5 text-[#B43C25] shrink-0 mt-0.5" />
           )}
-          <div>
-            <p className="font-semibold">
-              {result.queuedOffline
-                ? 'Queued for sync'
-                : result.isCorrect
-                ? `Well done (+${result.score} XP)`
-                : 'Keep practising'}
-            </p>
-            <p className="text-[#4A5851] mt-0.5">{result.feedback}</p>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-semibold">
+                {outcome.verificationStatus === 'queued_offline'
+                  ? 'Attempted locally · Waiting to sync (Unverified)'
+                  : outcome.verificationStatus === 'verified'
+                  ? outcome.isCorrect
+                    ? outcome.alreadyMastered || outcome.xpAwarded === 0
+                      ? 'Verified by SAUTI · Correct (+0 XP, already recorded)'
+                      : `Verified by SAUTI · Correct (+${outcome.xpAwarded ?? outcome.score ?? 0} XP)`
+                    : 'Verified by SAUTI · Keep practising'
+                  : 'Submission not verified'}
+              </p>
+              {outcome.verificationStatus === 'queued_offline' && (
+                <span className="px-2 py-0.5 rounded-md bg-[#F6C96B]/40 text-xs font-semibold text-[#17201C]">
+                  0 XP awarded offline
+                </span>
+              )}
+            </div>
+            <p className="text-[#4A5851]">{outcome.feedback}</p>
           </div>
         </div>
       )}

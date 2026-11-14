@@ -142,9 +142,13 @@ export function LearnerProfileSettingsPage() {
     isOnline,
     lowBandwidthMode,
     pendingSyncCount,
+    queuedItems,
+    needsAuthRecovery,
     isSyncing,
     setLowBandwidthMode,
     syncPendingQueue,
+    retryQueueItem,
+    dismissQueueItem,
     clearPendingQueue,
     clearActiveScopeData,
   } = useOfflineStore();
@@ -292,8 +296,8 @@ export function LearnerProfileSettingsPage() {
               <span>Offline Access, Data-Saving &amp; Local Privacy</span>
             </h2>
             <p className="text-xs text-[#4A5851] mt-1">
-              Offline downloads and local recordings are isolated strictly to this learner profile on
-              this browser.
+              Offline downloads, queued progress, and local recordings are isolated strictly to this
+              learner profile on this browser.
             </p>
           </div>
         </div>
@@ -336,13 +340,78 @@ export function LearnerProfileSettingsPage() {
           </div>
         )}
 
+        {queuedItems.length > 0 && (
+          <div className="rounded-2xl border border-[#245C45]/12 bg-[#FFF8ED]/70 p-4 space-y-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-semibold text-[#17201C]">
+                Queued offline progress ({queuedItems.length})
+              </p>
+              {needsAuthRecovery && (
+                <span className="px-2 py-0.5 rounded-md bg-[#F28B75]/20 text-[#B43C25] font-semibold">
+                  Sign-in required to sync
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {queuedItems.map((item) => {
+                const statusLabel =
+                  item.status === 'auth_required'
+                    ? 'Sign-in required'
+                    : item.status === 'needs_resolution'
+                    ? 'Needs attention'
+                    : 'Waiting to sync (Unverified)';
+                const badgeStyle =
+                  item.status === 'auth_required' || item.status === 'needs_resolution'
+                    ? 'bg-[#F28B75]/20 text-[#B43C25]'
+                    : 'bg-[#F6C96B]/35 text-[#17201C]';
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl bg-white border border-[#245C45]/10 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-[#17201C]">{item.label}</span>
+                        <span className={`px-2 py-0.5 rounded-md font-semibold ${badgeStyle}`}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                      {item.lastError && <p className="text-[#B43C25]">{item.lastError}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isOnline && (
+                        <button
+                          type="button"
+                          disabled={isSyncing}
+                          onClick={() => void retryQueueItem(item.id)}
+                          className="px-2.5 py-1 rounded-lg bg-[#245C45] text-[#FFF8ED] font-semibold hover:bg-[#194231] disabled:opacity-50"
+                        >
+                          Retry
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void dismissQueueItem(item.id)}
+                        className="px-2.5 py-1 rounded-lg border border-[#245C45]/20 text-[#4A5851] font-semibold hover:text-[#17201C]"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-3 pt-1">
           {pendingSyncCount > 0 && (
             <>
               <button
                 type="button"
                 disabled={!isOnline || isSyncing}
-                onClick={() => void syncPendingQueue()}
+                onClick={() => void syncPendingQueue({ forceRetryAll: true })}
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-xs font-semibold disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
