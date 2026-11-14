@@ -1,9 +1,21 @@
 import { useState } from 'react';
-import { CheckCircle2, HelpCircle, Mic, RotateCcw, Square, Volume2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Clock,
+  HelpCircle,
+  Mic,
+  RotateCcw,
+  Square,
+  Volume2,
+  XCircle,
+} from 'lucide-react';
 import { Activity } from '../../types/sauti';
-import { apiFetch } from '../../services/api';
+import { apiFetch, isOfflineOrNetworkError } from '../../services/api';
 import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
+import { useAuthStore } from '../../stores/authStore';
+import { buildOfflineScopeKey } from '../../lib/offlineDb';
+import { createClientAttemptId, useOfflineStore } from '../../stores/offlineStore';
 
 interface ActivityRunnerProps {
   activity: Activity;
@@ -12,6 +24,8 @@ interface ActivityRunnerProps {
   onAttempted: (result: { isCorrect: boolean; score: number; feedback: string }) => void;
 }
 
+const AI_EVALUATED_TYPES = new Set(['writing', 'conversation_sim', 'role_play']);
+
 export function ActivityRunner({
   activity,
   learnerId,
@@ -19,6 +33,10 @@ export function ActivityRunner({
   onAttempted,
 }: ActivityRunnerProps) {
   const payload = activity.payloadJson || {};
+  const { user, learnerProfile } = useAuthStore();
+  const { isOnline, queueProgressUpdate } = useOfflineStore();
+  const scopeKey = buildOfflineScopeKey(user?.id, learnerId ?? learnerProfile?.id ?? null);
+
   const { speak, isSpeaking } = useSpeechPlayback();
   const recorder = useAudioRecorder();
 
@@ -28,61 +46,111 @@ export function ActivityRunner({
   const [wordPairs, setWordPairs] = useState<Record<string, string>>({});
   const [activeLeftWord, setActiveLeftWord] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  const [transcribeNote, setTranscribeNote] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{
     isCorrect: boolean;
     score: number;
     feedback: string;
+    queuedOffline?: boolean;
   } | null>(null);
+
+  const queueAttemptOffline = async (answerValue: unknown, clientAttemptId: string) => {
+    await queueProgressUpdate({
+      id: clientAttemptId,
+      scopeKey,
+      learnerId: learnerId ?? learnerProfile?.id ?? null,
+      kind: 'activity_attempt',
+      endpoint: `/api/learning/activities/${activity.id}/attempt`,
+      payload: {
+        answer: answerValue,
+        learnerId,
+        clientAttemptId,
+      },
+      label: `Activity #${activity.id} (${activity.type.replace(/_/g, ' ')})`,
+    });
+
+    const isAiType = AI_EVALUATED_TYPES.has(activity.type);
+    const offlineFeedback = isAiType
+      ? 'Saved offline — cloud AI feedback and XP verification require an internet connection and will run automatically when reconnected.'
+      : 'Saved offline — your answer is queued safely and will sync XP and progress when you reconnect.';
+
+    const queuedRes = {
+      isCorrect: true,
+      score: 0,
+      feedback: offlineFeedback,
+      queuedOffline: true,
+    };
+    setResult(queuedRes);
+    onAttempted(queuedRes);
+  };
 
   const submitAnswer = async (answerValue: unknown) => {
     setSubmitting(true);
+    const clientAttemptId = createClientAttemptId();
+
+    if (!isOnline) {
+      await queueAttemptOffline(answerValue, clientAttemptId);
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const res = await apiFetch<{ isCorrect: boolean; score: number; feedback: string }>(
         `/api/learning/activities/${activity.id}/attempt`,
         {
           method: 'POST',
-          body: JSON.stringify({ answer: answerValue, learnerId }),
+          body: JSON.stringify({ answer: answerValue, learnerId, clientAttemptId }),
         }
       );
       setResult(res);
       onAttempted(res);
     } catch (err: any) {
-      setResult({
-        isCorrect: false,
-        score: 0,
-        feedback: err.message || 'Unable to submit answer.',
-      });
+      if (isOfflineOrNetworkError(err)) {
+        await queueAttemptOffline(answerValue, clientAttemptId);
+      } else {
+        setResult({
+          isCorrect: false,
+          score: 0,
+          feedback: err.message || 'Unable to submit answer.',
+        });
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleTranscribeAndFill = async () => {
+    setTranscribeNote(null);
+    if (!isOnline) {
+      setTranscribeNote(
+        'Cloud transcription requires an internet connection. Replay your recording below and type what you spoke.'
+      );
+      return;
+    }
+
     const audio = await recorder.getBase64Audio();
     if (!audio) return;
     setTranscribing(true);
     try {
       const res = await apiFetch<{ transcript: string }>('/api/voice/transcribe', {
         method: 'POST',
+        timeoutMs: 45000,
         body: JSON.stringify({ audioBase64: audio.base64, mimeType: audio.mimeType }),
       });
       setTextInput(res.transcript);
     } catch {
-      // Fallback: if Gemini transcription unavailable, prompt learner to type or review playback
-      setTextInput(
-        (prev) =>
-          prev ||
-          (payload.targetText
-            ? String(payload.targetText)
-            : 'Spoken audio recorded (server transcription unconfigured)')
+      setTranscribeNote(
+        'Server transcription is unavailable right now. Replay your recording and type your spoken answer below.'
       );
     } finally {
       setTranscribing(false);
     }
   };
 
-  const buttonBase = isKids ? 'py-4 px-5 rounded-2xl text-base font-bold' : 'py-3 px-4 rounded-xl text-sm font-semibold';
+  const buttonBase = isKids
+    ? 'py-4 px-5 rounded-2xl text-base font-bold'
+    : 'py-3 px-4 rounded-xl text-sm font-semibold';
 
   return (
     <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6 sm:p-8 space-y-5">
@@ -143,7 +211,7 @@ export function ActivityRunner({
             onClick={() => submitAnswer(selectedOption)}
             className="mt-2 px-6 py-3 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
           >
-            {submitting ? 'Checking...' : 'Check answer'}
+            {submitting ? 'Checking...' : isOnline ? 'Check answer' : 'Save answer offline'}
           </button>
         </div>
       )}
@@ -177,7 +245,7 @@ export function ActivityRunner({
             onClick={() => submitAnswer(selectedOption)}
             className="px-6 py-3 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
           >
-            {submitting ? 'Checking...' : 'Check picture'}
+            {submitting ? 'Checking...' : isOnline ? 'Check picture' : 'Save picture offline'}
           </button>
         </div>
       )}
@@ -229,7 +297,7 @@ export function ActivityRunner({
               onClick={() => submitAnswer(sentenceTokens)}
               className="px-6 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
             >
-              {submitting ? 'Checking...' : 'Check sentence'}
+              {submitting ? 'Checking...' : isOnline ? 'Check sentence' : 'Save sentence offline'}
             </button>
           </div>
         </div>
@@ -287,7 +355,7 @@ export function ActivityRunner({
             onClick={() => submitAnswer(wordPairs)}
             className="px-6 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
           >
-            {submitting ? 'Checking...' : 'Check pairs'}
+            {submitting ? 'Checking...' : isOnline ? 'Check pairs' : 'Save pairs offline'}
           </button>
         </div>
       )}
@@ -324,7 +392,7 @@ export function ActivityRunner({
             onClick={() => submitAnswer(textInput)}
             className="px-6 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
           >
-            {submitting ? 'Checking...' : 'Submit answer'}
+            {submitting ? 'Checking...' : isOnline ? 'Submit answer' : 'Save answer offline'}
           </button>
         </div>
       )}
@@ -374,7 +442,11 @@ export function ActivityRunner({
                     onClick={handleTranscribeAndFill}
                     className="px-3.5 py-2 rounded-xl border border-[#245C45]/25 text-xs font-semibold text-[#245C45]"
                   >
-                    {transcribing ? 'Transcribing...' : 'Transcribe recording'}
+                    {transcribing
+                      ? 'Transcribing...'
+                      : isOnline
+                      ? 'Transcribe recording'
+                      : 'Transcribe (needs internet)'}
                   </button>
                 )}
               </div>
@@ -399,6 +471,7 @@ export function ActivityRunner({
               <audio controls src={recorder.audioUrl} className="w-full h-9" />
             )}
 
+            {transcribeNote && <p className="text-xs text-[#4A5851]">{transcribeNote}</p>}
             {recorder.error && <p className="text-xs text-[#B43C25]">{recorder.error}</p>}
           </div>
 
@@ -416,7 +489,11 @@ export function ActivityRunner({
             onClick={() => submitAnswer(textInput)}
             className="px-6 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold disabled:opacity-50"
           >
-            {submitting ? 'Evaluating...' : 'Submit response'}
+            {submitting
+              ? 'Evaluating...'
+              : isOnline
+              ? 'Submit response'
+              : 'Save response offline'}
           </button>
         </div>
       )}
@@ -425,19 +502,27 @@ export function ActivityRunner({
       {result && (
         <div
           className={`rounded-xl p-4 border flex items-start gap-3 text-sm ${
-            result.isCorrect
+            result.queuedOffline
+              ? 'bg-[#FDF3E3] border-[#F6C96B] text-[#17201C]'
+              : result.isCorrect
               ? 'bg-[#245C45]/10 border-[#245C45]/30 text-[#17201C]'
               : 'bg-[#F28B75]/15 border-[#F28B75] text-[#17201C]'
           }`}
         >
-          {result.isCorrect ? (
+          {result.queuedOffline ? (
+            <Clock className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
+          ) : result.isCorrect ? (
             <CheckCircle2 className="w-5 h-5 text-[#245C45] shrink-0 mt-0.5" />
           ) : (
             <XCircle className="w-5 h-5 text-[#B43C25] shrink-0 mt-0.5" />
           )}
           <div>
             <p className="font-semibold">
-              {result.isCorrect ? `Well done (+${result.score} XP)` : 'Keep practising'}
+              {result.queuedOffline
+                ? 'Queued for sync'
+                : result.isCorrect
+                ? `Well done (+${result.score} XP)`
+                : 'Keep practising'}
             </p>
             <p className="text-[#4A5851] mt-0.5">{result.feedback}</p>
           </div>

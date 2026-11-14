@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Clock } from 'lucide-react';
-import { apiFetch } from '../../services/api';
+import { ArrowRight, CheckCircle2, Clock } from 'lucide-react';
+import { apiFetch, isOfflineOrNetworkError } from '../../services/api';
 import { Course } from '../../types/sauti';
 import { ENVIRONMENTS } from '../../utils/environments';
-
 import { useAuthStore } from '../../stores/authStore';
+import { buildOfflineScopeKey, listOfflineCourses } from '../../lib/offlineDb';
+import { useOfflineStore } from '../../stores/offlineStore';
 
 export function CoursesLibraryPage() {
-  const { activeChildId } = useAuthStore();
+  const { user, learnerProfile, activeChildId } = useAuthStore();
+  const isOnline = useOfflineStore((s) => s.isOnline);
+  const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
+
   const [courses, setCourses] = useState<Course[]>([]);
+  const [offlineCourseIds, setOfflineCourseIds] = useState<Set<number>>(new Set());
+  const [showingOfflineOnly, setShowingOfflineOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [envFilter, setEnvFilter] = useState('all');
   const [levelFilter, setLevelFilter] = useState('all');
@@ -18,6 +24,12 @@ export function CoursesLibraryPage() {
 
   useEffect(() => {
     setLoading(true);
+    listOfflineCourses(scopeKey)
+      .then((rows) => {
+        setOfflineCourseIds(new Set(rows.map((r) => r.courseId)));
+      })
+      .catch(() => {});
+
     const params = new URLSearchParams();
     if (activeChildId) params.set('learnerId', String(activeChildId));
     if (envFilter !== 'all') params.set('environment', envFilter);
@@ -26,14 +38,38 @@ export function CoursesLibraryPage() {
     if (maxDuration !== 'all') params.set('maxMinutes', maxDuration);
 
     apiFetch<{ courses: Course[] }>(`/api/learning/courses?${params.toString()}`)
-      .then((res) => setCourses(res.courses || []))
+      .then((res) => {
+        setCourses(res.courses || []);
+        setShowingOfflineOnly(false);
+      })
+      .catch(async (err) => {
+        if (isOfflineOrNetworkError(err)) {
+          const cached = await listOfflineCourses(scopeKey);
+          let fallbackCourses = cached.map((c) => ({
+            ...c.course,
+            programme: c.programme || undefined,
+          }));
+          if (levelFilter !== 'all') {
+            fallbackCourses = fallbackCourses.filter((c) => c.cefrLevel === levelFilter);
+          }
+          if (skillFilter !== 'all') {
+            fallbackCourses = fallbackCourses.filter(
+              (c) => c.skillFocus.toLowerCase() === skillFilter.toLowerCase()
+            );
+          }
+          setCourses(fallbackCourses);
+          setShowingOfflineOnly(true);
+        }
+      })
       .finally(() => setLoading(false));
-  }, [activeChildId, envFilter, levelFilter, skillFilter, maxDuration]);
+  }, [activeChildId, envFilter, levelFilter, skillFilter, maxDuration, scopeKey, isOnline]);
 
   return (
     <div className="space-y-8">
       <div>
-        <p className="text-xs font-semibold text-[#245C45] mb-1">Learning Library</p>
+        <p className="text-xs font-semibold text-[#245C45] mb-1">
+          Learning Library {showingOfflineOnly ? '· Offline Downloaded Courses' : ''}
+        </p>
         <h1 className="font-display text-3xl font-bold">Explore Courses &amp; Pathways</h1>
         <p className="text-sm text-[#4A5851] mt-1">
           Filter across age environments, CEFR levels (A1–C2), skills, and session length.
@@ -102,7 +138,11 @@ export function CoursesLibraryPage() {
         </div>
       ) : courses.length === 0 ? (
         <div className="rounded-2xl bg-white border border-[#245C45]/12 p-10 text-center">
-          <p className="font-display font-bold text-lg mb-2">No courses match those filters</p>
+          <p className="font-display font-bold text-lg mb-2">
+            {showingOfflineOnly
+              ? 'No downloaded courses stored for offline viewing'
+              : 'No courses match those filters'}
+          </p>
           <button
             type="button"
             onClick={() => {
@@ -125,9 +165,16 @@ export function CoursesLibraryPage() {
               className="rounded-2xl bg-white border border-[#245C45]/12 p-6 hover:border-[#245C45] transition-colors flex flex-col justify-between"
             >
               <div>
-                <p className="text-xs text-[#4A5851] mb-2">
-                  {course.programme?.title} · {course.cefrLevel} · {course.topic}
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-xs text-[#4A5851]">
+                    {course.programme?.title} · {course.cefrLevel} · {course.topic}
+                  </p>
+                  {offlineCourseIds.has(course.id) && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#245C45] shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Offline
+                    </span>
+                  )}
+                </div>
                 <h2 className="font-display text-xl font-bold mb-2">{course.title}</h2>
                 <p className="text-sm text-[#4A5851] leading-relaxed mb-4">{course.description}</p>
               </div>

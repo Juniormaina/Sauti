@@ -229,6 +229,39 @@ test('Priority 6: Server-verified lesson completion, anti-farming XP, and atomic
   assert.equal(afterRepeatComp.xp, expectedActivityXp + 40 + 50);
 });
 
+test('Offline sync idempotency: duplicate clientAttemptId replays without duplicate DB write or XP', async () => {
+  const act = lessonActivities[0];
+  const clientAttemptId = `offline-sync-${crypto.randomUUID()}`;
+  const first = await jsonReq(
+    `/api/learning/activities/${act.id}/attempt`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        answer: getCorrectAnswer(act),
+        clientAttemptId,
+      }),
+    },
+    learnerToken
+  );
+  assert.equal(first.status, 200);
+  assert.equal(first.body.alreadyProcessed, undefined);
+
+  const replay = await jsonReq(
+    `/api/learning/activities/${act.id}/attempt`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        answer: getCorrectAnswer(act),
+        clientAttemptId,
+      }),
+    },
+    learnerToken
+  );
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.alreadyProcessed, true);
+  assert.equal(replay.body.xpAwarded, 0);
+});
+
 test('Priority 5 & 7: Voice validation, MIME allowlist, size bounds, cross-origin check, and TTS rate limit', async () => {
   // Cross-origin mutating API blocked
   const csrf = await jsonReq(

@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { apiFetch } from '../services/api';
 import { formatTextForBrowserSpeech } from '../utils/speechPronunciation';
+import { useOfflineStore } from '../stores/offlineStore';
 
 export { formatTextForBrowserSpeech };
 export type SpeechEngineMode = 'idle' | 'gemini' | 'browser_fallback';
@@ -24,19 +25,47 @@ export function useSpeechPlayback() {
     setIsLoading(false);
   }, []);
 
+  const speakWithBrowser = useCallback((text: string, speed: number) => {
+    setIsLoading(false);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(formatTextForBrowserSpeech(text));
+      utterance.lang = 'en-GB';
+      utterance.rate = speed;
+      setEngineUsed('browser_fallback');
+      setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+        setError('Browser speech synthesis could not play audio.');
+      };
+      window.speechSynthesis.speak(utterance);
+      return 'browser_fallback' as const;
+    }
+    setError('Neither server TTS nor browser speech synthesis is available.');
+    return 'idle' as const;
+  }, []);
+
   const speak = useCallback(
     async (
       text: string,
-      options?: { voiceName?: string; speed?: number; style?: string }
+      options?: { voiceName?: string; speed?: number; style?: string; forceServer?: boolean }
     ) => {
       stop();
       setError(null);
       setIsLoading(true);
 
       const speed = options?.speed ?? 1;
+      const { isOnline, lowBandwidthMode } = useOfflineStore.getState();
+
+      // Offline or Data-Saving Mode: use zero-data local SpeechSynthesis directly
+      if (!isOnline || (lowBandwidthMode && !options?.forceServer)) {
+        return speakWithBrowser(text, speed);
+      }
+
       try {
         const result = await apiFetch<{ audioBase64: string; mimeType: string }>('/api/voice/tts', {
           method: 'POST',
+          timeoutMs: 15000,
           body: JSON.stringify({
             text,
             voiceName: options?.voiceName || 'Kore',
@@ -59,27 +88,10 @@ export function useSpeechPlayback() {
         await audio.play();
         return 'gemini' as const;
       } catch {
-        // Transparent fallback to browser speechSynthesis
-        setIsLoading(false);
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(formatTextForBrowserSpeech(text));
-          utterance.lang = 'en-GB';
-          utterance.rate = speed;
-          setEngineUsed('browser_fallback');
-          setIsSpeaking(true);
-          utterance.onend = () => setIsSpeaking(false);
-          utterance.onerror = () => {
-            setIsSpeaking(false);
-            setError('Browser speech synthesis could not play audio.');
-          };
-          window.speechSynthesis.speak(utterance);
-          return 'browser_fallback' as const;
-        }
-        setError('Neither server TTS nor browser speech synthesis is available.');
-        return 'idle' as const;
+        return speakWithBrowser(text, speed);
       }
     },
-    [stop]
+    [speakWithBrowser, stop]
   );
 
   return { speak, stop, isSpeaking, isLoading, engineUsed, error };

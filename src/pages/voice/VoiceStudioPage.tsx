@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  CheckCircle2,
+  Download,
   Headphones,
   Info,
   MessageSquare,
@@ -8,11 +10,14 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Save,
   ShieldAlert,
   Sparkles,
   Square,
   Trash2,
+  Upload,
   Volume2,
+  WifiOff,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { apiFetch } from '../../services/api';
@@ -21,6 +26,19 @@ import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { ResilientImage } from '../../components/ui/ResilientImage';
 import { SAUTI_IMAGES } from '../../utils/environments';
 import { ConversationSession, VoicePracticeSession } from '../../types/sauti';
+import {
+  buildOfflineScopeKey,
+  formatBytes,
+  listLocalRecordings,
+  listOfflineListeningItems,
+  LocalRecordingItem,
+  markLocalRecordingUploaded,
+  removeLocalRecording,
+  removeOfflineListeningItem,
+  saveLocalRecording,
+  saveOfflineListeningItem,
+} from '../../lib/offlineDb';
+import { useOfflineStore } from '../../stores/offlineStore';
 
 type StudioTab = 'listen' | 'speak' | 'pronunciation' | 'live';
 
@@ -83,12 +101,24 @@ function floatTo16BitPCMBase64(input: Float32Array): string {
 }
 
 export function VoiceStudioPage() {
-  const { learnerProfile, activeChildId } = useAuthStore();
+  const { user, learnerProfile, activeChildId } = useAuthStore();
+  const { isOnline, lowBandwidthMode } = useOfflineStore();
+  const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
+
   const [activeTab, setActiveTab] = useState<StudioTab>('listen');
   const [statusInfo, setStatusInfo] = useState<{
     geminiConfigured: boolean;
     provider: string;
   } | null>(null);
+
+  // Offline listening & local recordings state
+  const [savedListenIds, setSavedListenIds] = useState<Set<string>>(new Set());
+  const [localRecordings, setLocalRecordings] = useState<LocalRecordingItem[]>([]);
+  const [localConsentChecked, setLocalConsentChecked] = useState(true);
+  const [localSaveMsg, setLocalSaveMsg] = useState<string | null>(null);
+  const [localSaveErr, setLocalSaveErr] = useState<string | null>(null);
+  const [uploadingLocalId, setUploadingLocalId] = useState<string | null>(null);
+  const [playingLocalUrls, setPlayingLocalUrls] = useState<Record<string, string>>({});
 
   // Listen & Learn state
   const speech = useSpeechPlayback();
@@ -137,6 +167,19 @@ export function VoiceStudioPage() {
   const liveStreamRef = useRef<MediaStream | null>(null);
   const nextPlayTimeRef = useRef<number>(0);
 
+  const loadOfflineAssets = async () => {
+    try {
+      const [listenRows, recRows] = await Promise.all([
+        listOfflineListeningItems(scopeKey),
+        listLocalRecordings(scopeKey),
+      ]);
+      setSavedListenIds(new Set(listenRows.map((r) => r.itemId)));
+      setLocalRecordings(recRows);
+    } catch {
+      // ignore IndexedDB unavailable
+    }
+  };
+
   const loadHistory = async () => {
     try {
       const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
@@ -147,21 +190,145 @@ export function VoiceStudioPage() {
       setPracticeHistory(data.practiceSessions || []);
       setConvHistory(data.conversationSessions || []);
     } catch {
-      // Ignore if unauthenticated
+      // Ignore if unauthenticated or offline
     }
   };
 
   useEffect(() => {
-    apiFetch<{ geminiConfigured: boolean; provider: string }>('/api/voice/status')
-      .then(setStatusInfo)
-      .catch(() => {});
-    loadHistory();
+    void loadOfflineAssets();
+    if (isOnline) {
+      apiFetch<{ geminiConfigured: boolean; provider: string }>('/api/voice/status')
+        .then(setStatusInfo)
+        .catch(() => {});
+      void loadHistory();
+    }
 
     return () => {
       stopLiveConversation();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChildId]);
+  }, [activeChildId, scopeKey, isOnline]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(playingLocalUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [playingLocalUrls]);
+
+  const handleToggleSaveListening = async (item: (typeof LISTEN_ITEMS)[number], idx: number) => {
+    const itemId = `listen-${idx}`;
+    if (savedListenIds.has(itemId)) {
+      await removeOfflineListeningItem(scopeKey, itemId);
+    } else {
+      await saveOfflineListeningItem(scopeKey, {
+        itemId,
+        category: item.category,
+        title: item.title,
+        text: item.text,
+      });
+    }
+    await loadOfflineAssets();
+  };
+
+  const handleSaveRecordingLocally = async () => {
+    setLocalSaveMsg(null);
+    setLocalSaveErr(null);
+    if (!recorder.audioBlob) return;
+    if (!localConsentChecked) {
+      setLocalSaveErr('Confirm device-only local storage before saving this recording.');
+      return;
+    }
+    try {
+      await saveLocalRecording(scopeKey, {
+        title: `Voice Practice (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+        audioBlob: recorder.audioBlob,
+        mimeType: recorder.audioBlob.type || 'audio/webm',
+        durationSeconds: recorder.durationSeconds,
+        consentConfirmed: localConsentChecked,
+      });
+      await loadOfflineAssets();
+      setLocalSaveMsg(
+        'Recording saved locally on this device only. Nothing is uploaded until you choose.'
+      );
+    } catch (err: any) {
+      setLocalSaveErr(err?.message || 'Unable to save recording locally.');
+    }
+  };
+
+  const handleUploadLocalRecording = async (rec: LocalRecordingItem) => {
+    if (!isOnline) {
+      setLocalSaveErr('Uploading & transcribing requires an active internet connection.');
+      return;
+    }
+    setLocalSaveErr(null);
+    setLocalSaveMsg(null);
+    setUploadingLocalId(rec.id);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const res = String(reader.result || '');
+          const idx = res.indexOf(',');
+          resolve(idx >= 0 ? res.slice(idx + 1) : res);
+        };
+        reader.onerror = () => reject(new Error('Failed to read local audio recording.'));
+        reader.readAsDataURL(rec.audioBlob);
+      });
+
+      const tr = await apiFetch<{ transcript: string }>('/api/voice/transcribe', {
+        method: 'POST',
+        timeoutMs: 45000,
+        body: JSON.stringify({ audioBase64: base64, mimeType: rec.mimeType }),
+      });
+
+      const words = tr.transcript.split(/\s+/).filter(Boolean).length;
+      const feedback =
+        words > 0
+          ? `Uploaded recording transcribed (${words} words, ${rec.durationSeconds}s).`
+          : `Uploaded recording (${rec.durationSeconds}s) processed.`;
+
+      setSpeakTranscript(tr.transcript);
+      setSpeakFeedback(feedback);
+
+      await apiFetch('/api/voice/speak-log', {
+        method: 'POST',
+        body: JSON.stringify({
+          learnerId: activeChildId || undefined,
+          mode: 'speak',
+          transcript: tr.transcript,
+          feedback,
+          durationSeconds: rec.durationSeconds,
+        }),
+      });
+      await markLocalRecordingUploaded(rec.id);
+      await loadOfflineAssets();
+      await loadHistory();
+      setLocalSaveMsg('Uploaded and transcribed your saved recording.');
+    } catch (err: any) {
+      setLocalSaveErr(err?.message || 'Unable to upload recording right now.');
+    } finally {
+      setUploadingLocalId(null);
+    }
+  };
+
+  const handleDeleteLocalRecording = async (id: string) => {
+    if (playingLocalUrls[id]) {
+      URL.revokeObjectURL(playingLocalUrls[id]);
+      setPlayingLocalUrls((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+    await removeLocalRecording(id);
+    await loadOfflineAssets();
+  };
+
+  const handlePreviewLocalRecording = (rec: LocalRecordingItem) => {
+    if (playingLocalUrls[rec.id]) return;
+    const url = URL.createObjectURL(rec.audioBlob);
+    setPlayingLocalUrls((prev) => ({ ...prev, [rec.id]: url }));
+  };
 
   // --- Speak & Practise handler ---
   const handleSubmitSpeakRecording = async () => {
@@ -486,7 +653,10 @@ export function VoiceStudioPage() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold text-[#245C45] mb-1">
-            Voice Studio · {statusInfo?.provider || 'Checking voice configuration...'}
+            Voice Studio ·{' '}
+            {!isOnline
+              ? 'Offline Mode (Local Device Speech & Mic)'
+              : statusInfo?.provider || 'Checking voice configuration...'}
           </p>
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-[#17201C]">
             Find your voice at your own pace
@@ -524,21 +694,53 @@ export function VoiceStudioPage() {
       {activeTab === 'listen' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-5 space-y-3">
-            {LISTEN_ITEMS.map((item, idx) => (
-              <button
-                key={item.title}
-                type="button"
-                onClick={() => setSelectedListenIdx(idx)}
-                className={`w-full text-left p-5 rounded-2xl border transition-colors ${
-                  selectedListenIdx === idx
-                    ? 'bg-[#245C45] text-[#FFF8ED] border-[#245C45]'
-                    : 'bg-white border-[#245C45]/12 hover:border-[#245C45]/40'
-                }`}
-              >
-                <p className="text-xs opacity-75 mb-1">{item.category}</p>
-                <p className="font-display font-bold text-lg">{item.title}</p>
-              </button>
-            ))}
+            {LISTEN_ITEMS.map((item, idx) => {
+              const savedOffline = savedListenIds.has(`listen-${idx}`);
+              return (
+                <div
+                  key={item.title}
+                  className={`rounded-2xl border transition-colors ${
+                    selectedListenIdx === idx
+                      ? 'bg-[#245C45] text-[#FFF8ED] border-[#245C45]'
+                      : 'bg-white border-[#245C45]/12 hover:border-[#245C45]/40'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedListenIdx(idx)}
+                    className="w-full text-left p-5 pb-3"
+                  >
+                    <p className="text-xs opacity-75 mb-1">
+                      {item.category} {savedOffline ? '· Saved offline' : ''}
+                    </p>
+                    <p className="font-display font-bold text-lg">{item.title}</p>
+                  </button>
+                  <div className="px-5 pb-4 flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleSaveListening(item, idx)}
+                      className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border ${
+                        selectedListenIdx === idx
+                          ? 'border-white/25 text-[#FFF8ED] hover:bg-white/10'
+                          : 'border-[#245C45]/20 text-[#245C45] hover:bg-[#FDF3E3]'
+                      }`}
+                    >
+                      {savedOffline ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Saved offline</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Save for offline</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="lg:col-span-7 rounded-3xl bg-white border border-[#245C45]/12 p-7 flex flex-col justify-between space-y-6">
@@ -549,6 +751,14 @@ export function VoiceStudioPage() {
               <p className="font-display text-2xl sm:text-3xl font-bold leading-snug text-[#17201C] mb-6">
                 &ldquo;{LISTEN_ITEMS[selectedListenIdx].text}&rdquo;
               </p>
+
+              {(!isOnline || lowBandwidthMode) && (
+                <div className="mb-5 rounded-xl bg-[#FDF3E3] border border-[#245C45]/15 px-4 py-3 text-xs text-[#4A5851]">
+                  {!isOnline
+                    ? 'Offline mode active: playback uses your device’s built-in SpeechSynthesis engine with zero mobile data.'
+                    : 'Data-Saving Mode is on: playback uses your device’s local SpeechSynthesis engine instead of downloading server audio.'}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -628,7 +838,7 @@ export function VoiceStudioPage() {
                 <span className="text-xs text-[#4A5851]">
                   {speech.engineUsed === 'gemini'
                     ? 'Engine: Gemini TTS'
-                    : 'Engine: Browser SpeechSynthesis fallback'}
+                    : 'Engine: Device SpeechSynthesis (offline-capable)'}
                 </span>
               )}
             </div>
@@ -643,13 +853,24 @@ export function VoiceStudioPage() {
             <div>
               <h2 className="font-display text-2xl font-bold">Speak &amp; Practise</h2>
               <p className="text-sm text-[#4A5851]">
-                Introduce your day, describe a scene, or practise an upcoming conversation aloud.
+                Record locally anytime—even offline—and choose if and when to upload for cloud transcription.
               </p>
             </div>
             <span className="text-xs font-mono px-3 py-1.5 rounded-lg bg-[#FDF3E3] text-[#245C45] tabular-nums">
               Mic status: {recorder.permission}
             </span>
           </div>
+
+          {!isOnline && (
+            <div className="rounded-xl bg-[#FDF3E3] border border-[#F6C96B] p-4 flex items-start gap-2.5 text-xs text-[#17201C]">
+              <WifiOff className="w-4 h-4 mt-0.5 text-[#B43C25] shrink-0" />
+              <span>
+                You are offline. Local microphone recording and playback work normally, and you can
+                save recordings on this device. Cloud AI transcription requires an internet
+                connection and will only run when you tap &ldquo;Upload &amp; transcribe&rdquo;.
+              </span>
+            </div>
+          )}
 
           {recorder.error && (
             <div className="rounded-xl bg-[#F28B75]/15 border border-[#F28B75] p-4 flex items-start gap-2.5 text-sm">
@@ -712,23 +933,64 @@ export function VoiceStudioPage() {
                   </button>
                   <button
                     type="button"
-                    disabled={isTranscribing}
-                    onClick={handleSubmitSpeakRecording}
-                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold hover:bg-[#194231]"
+                    onClick={() => void handleSaveRecordingLocally()}
+                    className="inline-flex items-center gap-2 px-5 py-3.5 rounded-xl border border-[#245C45] bg-white text-[#245C45] text-sm font-semibold hover:bg-[#FFF8ED]"
                   >
-                    <span>{isTranscribing ? 'Transcribing...' : 'Submit & transcribe'}</span>
+                    <Save className="w-4 h-4" />
+                    <span>Save locally on device</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isTranscribing || !isOnline}
+                    onClick={handleSubmitSpeakRecording}
+                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold hover:bg-[#194231] disabled:opacity-50"
+                  >
+                    <span>
+                      {isTranscribing
+                        ? 'Transcribing...'
+                        : isOnline
+                        ? 'Submit & transcribe'
+                        : 'Transcribe (needs internet)'}
+                    </span>
                   </button>
                 </>
               )}
             </div>
 
             {recorder.audioUrl && (
-              <div className="w-full max-w-md pt-2">
-                <p className="text-xs font-semibold text-[#4A5851] mb-1.5">Replay your recording</p>
-                <audio controls src={recorder.audioUrl} className="w-full" />
+              <div className="w-full max-w-md space-y-3 pt-2">
+                <div>
+                  <p className="text-xs font-semibold text-[#4A5851] mb-1.5">
+                    Replay your recording
+                  </p>
+                  <audio controls src={recorder.audioUrl} className="w-full" />
+                </div>
+                <label className="flex items-start gap-2 text-xs text-[#4A5851]">
+                  <input
+                    type="checkbox"
+                    checked={localConsentChecked}
+                    onChange={(e) => setLocalConsentChecked(e.target.checked)}
+                    className="mt-0.5 rounded border-[#245C45]/30"
+                  />
+                  <span>
+                    Keep saved recordings private on this device only (capped at 25 MB; never
+                    uploaded unless I tap Upload).
+                  </span>
+                </label>
               </div>
             )}
           </div>
+
+          {localSaveMsg && (
+            <div className="rounded-xl bg-[#245C45]/10 border border-[#245C45]/30 p-3.5 text-xs text-[#17201C]">
+              {localSaveMsg}
+            </div>
+          )}
+          {localSaveErr && (
+            <div className="rounded-xl bg-[#F28B75]/15 border border-[#F28B75] p-3.5 text-xs text-[#B43C25]">
+              {localSaveErr}
+            </div>
+          )}
 
           {transcribeError && (
             <div className="rounded-xl bg-[#F6C96B]/25 border border-[#F6C96B] p-4 text-sm text-[#17201C]">
@@ -747,6 +1009,81 @@ export function VoiceStudioPage() {
               {speakFeedback && <p className="text-sm text-[#4A5851]">{speakFeedback}</p>}
             </div>
           )}
+
+          {/* Locally Saved Recordings Manager */}
+          <div className="rounded-2xl border border-[#245C45]/12 p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-display text-lg font-bold">
+                Saved Offline Recordings ({localRecordings.length})
+              </h3>
+              <span className="text-xs text-[#4A5851]">
+                Stored locally in browser IndexedDB · Opt-in upload only
+              </span>
+            </div>
+
+            {localRecordings.length === 0 ? (
+              <p className="text-xs text-[#4A5851]">
+                No recordings saved locally yet. Record your voice above and tap &ldquo;Save locally
+                on device&rdquo; to keep it offline.
+              </p>
+            ) : (
+              <div className="divide-y divide-[#245C45]/10">
+                {localRecordings.map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-[#17201C]">{rec.title}</p>
+                      <p className="text-xs text-[#4A5851] tabular-nums">
+                        {rec.durationSeconds}s · {formatBytes(rec.sizeBytes)} ·{' '}
+                        {new Date(rec.createdAt).toLocaleString()}
+                        {rec.uploadedAt ? ' · Transcribed online' : ' · Local only'}
+                      </p>
+                      {playingLocalUrls[rec.id] && (
+                        <audio controls src={playingLocalUrls[rec.id]} className="w-full max-w-sm h-9 mt-1" />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {!playingLocalUrls[rec.id] && (
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewLocalRecording(rec)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#245C45]/20 text-xs font-semibold text-[#245C45]"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Listen</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={!isOnline || uploadingLocalId === rec.id}
+                        onClick={() => void handleUploadLocalRecording(rec)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#245C45] text-[#FFF8ED] text-xs font-semibold disabled:opacity-50"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>
+                          {uploadingLocalId === rec.id
+                            ? 'Uploading...'
+                            : isOnline
+                            ? 'Upload & transcribe'
+                            : 'Needs internet'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteLocalRecording(rec.id)}
+                        aria-label="Delete local recording"
+                        className="p-2 rounded-lg text-[#4A5851] hover:text-[#B43C25] hover:bg-[#F28B75]/15"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -939,14 +1276,25 @@ export function VoiceStudioPage() {
               </select>
             </div>
 
+            {!isOnline && (
+              <div className="rounded-xl bg-[#FDF3E3] border border-[#F6C96B] p-3.5 text-xs text-[#17201C] flex items-start gap-2">
+                <WifiOff className="w-4 h-4 text-[#B43C25] shrink-0 mt-0.5" />
+                <span>
+                  Real-time Gemini Live voice sessions require an active internet connection. You can
+                  practise offline using Listen &amp; Learn, local recording, or Demo Mode below.
+                </span>
+              </div>
+            )}
+
             <div className="space-y-2.5">
               {liveState !== 'connected' ? (
                 <button
                   type="button"
+                  disabled={!isOnline}
                   onClick={startLiveConversation}
-                  className="w-full py-3 rounded-xl bg-[#245C45] text-[#FFF8ED] font-semibold text-sm hover:bg-[#194231]"
+                  className="w-full py-3 rounded-xl bg-[#245C45] text-[#FFF8ED] font-semibold text-sm hover:bg-[#194231] disabled:opacity-50"
                 >
-                  Start live voice session
+                  {isOnline ? 'Start live voice session' : 'Live AI requires internet'}
                 </button>
               ) : (
                 <button
@@ -961,10 +1309,11 @@ export function VoiceStudioPage() {
               {transcriptList.length > 0 && liveState !== 'connected' && (
                 <button
                   type="button"
+                  disabled={!isOnline}
                   onClick={handleFinishAndSummarize}
-                  className="w-full py-2.5 rounded-xl border border-[#245C45]/25 text-[#245C45] font-semibold text-xs"
+                  className="w-full py-2.5 rounded-xl border border-[#245C45]/25 text-[#245C45] font-semibold text-xs disabled:opacity-50"
                 >
-                  Generate end-of-session summary
+                  {isOnline ? 'Generate end-of-session summary' : 'AI summary requires internet'}
                 </button>
               )}
             </div>

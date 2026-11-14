@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Award, BookOpen, Home, LogOut, Mic, Settings, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
+import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
 
 export function KidsLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -75,6 +76,7 @@ export function KidsLayout({ children }: { children: ReactNode }) {
       </header>
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 pb-24 md:pb-10">
+        <ConnectivityBanner />
         {children}
       </main>
 

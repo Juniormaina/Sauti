@@ -3,7 +3,13 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { onAuthStateChanged } from 'firebase/auth';
 import { firebaseAuth } from './lib/firebase';
 import { apiFetch } from './services/api';
-import { useAuthStore } from './stores/authStore';
+import {
+  persistOfflineProfileSnapshot,
+  readOfflineProfileSnapshot,
+  useAuthStore,
+} from './stores/authStore';
+import { useOfflineStore } from './stores/offlineStore';
+import { buildOfflineScopeKey } from './lib/offlineDb';
 import { UserRole } from './types/sauti';
 
 import { HomePage } from './pages/marketing/HomePage';
@@ -67,7 +73,53 @@ function LearnerRoute({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
-  const { setSession, setInitialized } = useAuthStore();
+  const { user, learnerProfile, activeChildId, isOfflineSession, setSession, setInitialized } =
+    useAuthStore();
+  const isOnline = useOfflineStore((s) => s.isOnline);
+  const setActiveScopeKey = useOfflineStore((s) => s.setActiveScopeKey);
+  const syncPendingQueue = useOfflineStore((s) => s.syncPendingQueue);
+
+  useEffect(() => {
+    const scopeKey = user
+      ? buildOfflineScopeKey(user.id, activeChildId ?? learnerProfile?.id ?? null)
+      : null;
+    void setActiveScopeKey(scopeKey).then(() => {
+      if (scopeKey && navigator.onLine) {
+        void syncPendingQueue({ silent: true });
+      }
+    });
+  }, [user, learnerProfile?.id, activeChildId, setActiveScopeKey, syncPendingQueue]);
+
+  useEffect(() => {
+    if (isOnline && isOfflineSession && firebaseAuth.currentUser) {
+      firebaseAuth.currentUser
+        .getIdToken()
+        .then((idToken) =>
+          apiFetch<any>('/api/auth/firebase-sync', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}` },
+          })
+        )
+        .then((res) => {
+          setSession({
+            user: res.user,
+            learnerProfile: res.learnerProfile,
+            parentProfile: res.parentProfile,
+            teacherProfile: res.teacherProfile,
+            isOfflineSession: false,
+          });
+          persistOfflineProfileSnapshot({
+            uid: firebaseAuth.currentUser!.uid,
+            user: res.user,
+            learnerProfile: res.learnerProfile,
+            parentProfile: res.parentProfile,
+            teacherProfile: res.teacherProfile,
+            savedAt: new Date().toISOString(),
+          });
+        })
+        .catch(() => {});
+    }
+  }, [isOnline, isOfflineSession, setSession]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(firebaseAuth, async (fbUser) => {
@@ -83,9 +135,27 @@ export default function App() {
             learnerProfile: res.learnerProfile,
             parentProfile: res.parentProfile,
             teacherProfile: res.teacherProfile,
+            isOfflineSession: false,
+          });
+          persistOfflineProfileSnapshot({
+            uid: fbUser.uid,
+            user: res.user,
+            learnerProfile: res.learnerProfile,
+            parentProfile: res.parentProfile,
+            teacherProfile: res.teacherProfile,
+            savedAt: new Date().toISOString(),
           });
         } catch {
-          // ignore silent sync error
+          const cached = readOfflineProfileSnapshot(fbUser.uid);
+          if (cached) {
+            setSession({
+              user: cached.user,
+              learnerProfile: cached.learnerProfile,
+              parentProfile: cached.parentProfile,
+              teacherProfile: cached.teacherProfile,
+              isOfflineSession: true,
+            });
+          }
         }
       }
       setInitialized(true);

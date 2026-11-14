@@ -5,17 +5,21 @@ import {
   ArrowRight,
   Award,
   BookOpen,
+  Download,
   Flame,
   Headphones,
   Mic,
   Sparkles,
   Target,
+  WifiOff,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import { apiFetch } from '../../services/api';
+import { apiFetch, isOfflineOrNetworkError } from '../../services/api';
 import { getEnvironmentMeta, SAUTI_IMAGES } from '../../utils/environments';
 import { ResilientImage } from '../../components/ui/ResilientImage';
 import { AchievementItem, Course, Lesson, VoicePracticeSession } from '../../types/sauti';
+import { buildOfflineScopeKey, listOfflineLessons, OfflineLessonRecord } from '../../lib/offlineDb';
+import { useOfflineStore } from '../../stores/offlineStore';
 
 interface DashboardData {
   learner: any;
@@ -29,8 +33,12 @@ interface DashboardData {
 }
 
 export function LearnerDashboardPage() {
-  const { learnerProfile, activeChildId } = useAuthStore();
+  const { user, learnerProfile, activeChildId } = useAuthStore();
+  const isOnline = useOfflineStore((s) => s.isOnline);
+  const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
+
   const [data, setData] = useState<DashboardData | null>(null);
+  const [offlineLessons, setOfflineLessons] = useState<OfflineLessonRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,15 +47,25 @@ export function LearnerDashboardPage() {
 
   useEffect(() => {
     setLoading(true);
+    listOfflineLessons(scopeKey)
+      .then(setOfflineLessons)
+      .catch(() => setOfflineLessons([]));
+
     const qs = activeChildId ? `?learnerId=${activeChildId}` : '';
     apiFetch<DashboardData>(`/api/learning/dashboard${qs}`)
       .then((res) => {
         setData(res);
         setError(null);
       })
-      .catch((err) => setError(err.message || 'Unable to load dashboard'))
+      .catch((err) => {
+        if (isOfflineOrNetworkError(err)) {
+          setError(null);
+        } else {
+          setError(err.message || 'Unable to load dashboard');
+        }
+      })
       .finally(() => setLoading(false));
-  }, [activeChildId]);
+  }, [activeChildId, scopeKey, isOnline]);
 
   if (loading) {
     return (
@@ -73,7 +91,7 @@ export function LearnerDashboardPage() {
   const learner = data?.learner || learnerProfile;
   const completedCount = data?.completedLessonsCount ?? 0;
   const totalCount = Math.max(1, data?.totalLessonsCount ?? 1);
-  const completionPct = Math.round((completedCount / totalCount) * 100);
+  const completionPct = data ? Math.round((completedCount / totalCount) * 100) : 0;
   const nextLesson =
     data?.recommendedLessons?.find((l) => !l.completed) || data?.recommendedLessons?.[0];
 
@@ -143,6 +161,56 @@ export function LearnerDashboardPage() {
         </div>
       </motion.section>
 
+      {/* Offline Downloaded Lessons Section (always visible when offline or when lessons are downloaded) */}
+      {(offlineLessons.length > 0 || !isOnline) && (
+        <section className="rounded-3xl bg-[#FDF3E3] border border-[#245C45]/15 p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {isOnline ? (
+                <Download className="w-4 h-4 text-[#245C45]" />
+              ) : (
+                <WifiOff className="w-4 h-4 text-[#B43C25]" />
+              )}
+              <h2 className="font-display text-xl font-bold">
+                Downloaded for Offline Practice ({offlineLessons.length})
+              </h2>
+            </div>
+            <Link to="/learn/courses" className="text-xs font-semibold text-[#245C45] hover:underline">
+              Manage offline courses →
+            </Link>
+          </div>
+
+          {offlineLessons.length === 0 ? (
+            <p className="text-sm text-[#4A5851]">
+              You are currently offline and have not downloaded any lessons on this device yet. Open a
+              course while connected to save lessons for offline practice, or practise Voice Studio
+              listening &amp; local recordings.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {offlineLessons.map((rec) => (
+                <Link
+                  key={rec.lessonId}
+                  to={`/learn/lessons/${rec.lessonId}`}
+                  className="rounded-2xl bg-white border border-[#245C45]/12 p-4 hover:border-[#245C45] transition-colors flex flex-col justify-between"
+                >
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#245C45] mb-1">
+                      Offline ready · {rec.lesson.cefrLevel} · {rec.activities.length} activities
+                    </p>
+                    <p className="font-display font-bold text-base mb-1">{rec.lesson.title}</p>
+                    <p className="text-xs text-[#4A5851] line-clamp-2">{rec.lesson.objective}</p>
+                  </div>
+                  <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#245C45]">
+                    Open lesson <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Progress & Shortcuts Grid */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-2xl bg-white border border-[#245C45]/12 p-5">
@@ -168,7 +236,9 @@ export function LearnerDashboardPage() {
             <span>Pathway Progress</span>
             <Target className="w-4 h-4 text-[#245C45]" />
           </div>
-          <p className="font-display text-3xl font-bold tabular-nums">{completionPct}%</p>
+          <p className="font-display text-3xl font-bold tabular-nums">
+            {data ? `${completionPct}%` : 'Offline'}
+          </p>
           <div className="w-full h-2 rounded-full bg-[#FDF3E3] mt-2 overflow-hidden">
             <div className="h-full bg-[#245C45]" style={{ width: `${completionPct}%` }} />
           </div>
@@ -194,71 +264,73 @@ export function LearnerDashboardPage() {
       </section>
 
       {/* Recommended Courses & Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <section className="lg:col-span-8 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-2xl font-bold">
-              {isKids ? 'Your Story Courses' : 'Recommended Courses'}
-            </h2>
-            <Link to="/learn/courses" className="text-sm font-semibold text-[#245C45] hover:underline">
-              Browse all courses
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {(data?.recommendedCourses || []).map((course) => (
-              <Link
-                key={course.id}
-                to={`/learn/courses/${course.id}`}
-                className="rounded-2xl bg-white border border-[#245C45]/12 p-6 hover:border-[#245C45] transition-colors flex flex-col justify-between"
-              >
-                <div>
-                  <p className="text-xs text-[#4A5851] mb-1.5">
-                    {course.cefrLevel} · {course.skillFocus} · {course.estimatedMinutes} min
-                  </p>
-                  <h3 className="font-display text-lg font-bold mb-2">{course.title}</h3>
-                  <p className="text-sm text-[#4A5851] leading-relaxed mb-4">
-                    {course.description}
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#245C45]">
-                  <BookOpen className="w-4 h-4" /> Open course
-                </span>
+      {data && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <section className="lg:col-span-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-2xl font-bold">
+                {isKids ? 'Your Story Courses' : 'Recommended Courses'}
+              </h2>
+              <Link to="/learn/courses" className="text-sm font-semibold text-[#245C45] hover:underline">
+                Browse all courses
               </Link>
-            ))}
-          </div>
-        </section>
+            </div>
 
-        <section className="lg:col-span-4 space-y-4">
-          <h2 className="font-display text-2xl font-bold">Achievements</h2>
-          <div className="rounded-2xl bg-white border border-[#245C45]/12 p-5 space-y-3">
-            {(data?.achievements || []).slice(0, 4).map((ach) => (
-              <div
-                key={ach.id}
-                className={`flex items-start gap-3 p-3 rounded-xl ${
-                  ach.earned ? 'bg-[#245C45]/10' : 'bg-[#FFF8ED]/60 opacity-70'
-                }`}
-              >
-                <Award
-                  className={`w-5 h-5 shrink-0 mt-0.5 ${
-                    ach.earned ? 'text-[#245C45]' : 'text-[#4A5851]'
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {(data.recommendedCourses || []).map((course) => (
+                <Link
+                  key={course.id}
+                  to={`/learn/courses/${course.id}`}
+                  className="rounded-2xl bg-white border border-[#245C45]/12 p-6 hover:border-[#245C45] transition-colors flex flex-col justify-between"
+                >
+                  <div>
+                    <p className="text-xs text-[#4A5851] mb-1.5">
+                      {course.cefrLevel} · {course.skillFocus} · {course.estimatedMinutes} min
+                    </p>
+                    <h3 className="font-display text-lg font-bold mb-2">{course.title}</h3>
+                    <p className="text-sm text-[#4A5851] leading-relaxed mb-4">
+                      {course.description}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#245C45]">
+                    <BookOpen className="w-4 h-4" /> Open course
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+
+          <section className="lg:col-span-4 space-y-4">
+            <h2 className="font-display text-2xl font-bold">Achievements</h2>
+            <div className="rounded-2xl bg-white border border-[#245C45]/12 p-5 space-y-3">
+              {(data.achievements || []).slice(0, 4).map((ach) => (
+                <div
+                  key={ach.id}
+                  className={`flex items-start gap-3 p-3 rounded-xl ${
+                    ach.earned ? 'bg-[#245C45]/10' : 'bg-[#FFF8ED]/60 opacity-70'
                   }`}
-                />
-                <div>
-                  <p className="font-display font-bold text-sm">{ach.title}</p>
-                  <p className="text-xs text-[#4A5851]">{ach.description}</p>
+                >
+                  <Award
+                    className={`w-5 h-5 shrink-0 mt-0.5 ${
+                      ach.earned ? 'text-[#245C45]' : 'text-[#4A5851]'
+                    }`}
+                  />
+                  <div>
+                    <p className="font-display font-bold text-sm">{ach.title}</p>
+                    <p className="text-xs text-[#4A5851]">{ach.description}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-            <Link
-              to="/learn/achievements"
-              className="block text-center text-xs font-semibold text-[#245C45] pt-1 hover:underline"
-            >
-              View all milestones
-            </Link>
-          </div>
-        </section>
-      </div>
+              ))}
+              <Link
+                to="/learn/achievements"
+                className="block text-center text-xs font-semibold text-[#245C45] pt-1 hover:underline"
+              >
+                View all milestones
+              </Link>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

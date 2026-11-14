@@ -1,6 +1,33 @@
 import { firebaseAuth } from '../lib/firebase';
 import { useAuthStore } from '../stores/authStore';
 
+export class ApiError extends Error {
+  status: number;
+  isNetworkError: boolean;
+
+  constructor(message: string, status = 0, isNetworkError = false) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.isNetworkError = isNetworkError;
+  }
+}
+
+export interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number;
+  retries?: number;
+}
+
+export function isOfflineOrNetworkError(err: unknown): boolean {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  if (err instanceof ApiError) return err.isNetworkError || err.status === 0;
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error && (err.name === 'AbortError' || /network|fetch|timeout/i.test(err.message))) {
+    return true;
+  }
+  return false;
+}
+
 async function resolveBearerToken(): Promise<string | null> {
   const storeToken = useAuthStore.getState().token;
   if (storeToken) return storeToken;
@@ -10,30 +37,81 @@ async function resolveBearerToken(): Promise<string | null> {
   return null;
 }
 
-export async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+  const { timeoutMs = 20000, retries, ...fetchOptions } = options;
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const maxRetries = retries ?? (method === 'GET' ? 1 : 0);
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new ApiError('You appear to be offline.', 0, true);
+  }
+
   const token = await resolveBearerToken();
-  const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
+  const headers = new Headers(fetchOptions.headers || {});
+  if (!headers.has('Content-Type') && fetchOptions.body && typeof fetchOptions.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, { ...options, headers });
-  const text = await response.text();
-  let data: any = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { error: text };
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(path, {
+        ...fetchOptions,
+        headers,
+        signal: fetchOptions.signal || controller.signal,
+      });
+      clearTimeout(timer);
+
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text };
+      }
+
+      if (!response.ok) {
+        const apiErr = new ApiError(
+          data?.error || `Request failed (${response.status})`,
+          response.status,
+          false
+        );
+        if (attempt < maxRetries && [502, 503, 504].includes(response.status)) {
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        throw apiErr;
+      }
+
+      return data as T;
+    } catch (err: any) {
+      clearTimeout(timer);
+      lastError = err;
+      if (err instanceof ApiError && !err.isNetworkError) {
+        throw err;
+      }
+      if (attempt < maxRetries && typeof navigator !== 'undefined' && navigator.onLine) {
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        continue;
+      }
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(
+        err?.name === 'AbortError'
+          ? 'The connection timed out on a slow network.'
+          : err?.message || 'Unable to reach SAUTI right now.',
+        0,
+        true
+      );
+    }
   }
 
-  if (!response.ok) {
-    throw new Error(data?.error || `Request failed (${response.status})`);
-  }
-
-  return data as T;
+  throw lastError instanceof Error ? lastError : new ApiError('Request failed', 0, true);
 }
 
 export async function getActiveAuthToken(): Promise<string | null> {

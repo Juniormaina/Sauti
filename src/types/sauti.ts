@@ -130,6 +130,8 @@ export interface ModuleWithLessons {
   lessons: Lesson[];
 }
 
+export type Module = Omit<ModuleWithLessons, 'lessons'>;
+
 export interface Activity {
   id: number;
   lessonId: number;

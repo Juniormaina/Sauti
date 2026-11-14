@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Menu, X } from 'lucide-react';
+import { Menu, WifiOff, X } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { useOfflineStore } from '../../stores/offlineStore';
+import { PWAInstallButton } from '../pwa/PWAStatusControls';
 
 export function PublicHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user } = useAuthStore();
+  const isOnline = useOfflineStore((s) => s.isOnline);
 
   const dashboardPath =
     user?.role === 'PARENT'
@@ -55,8 +58,14 @@ export function PublicHeader() {
           </Link>
         </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="hidden md:flex items-center shrink-0">
+        {/* Zone 3: Install & primary action */}
+        <div className="hidden md:flex items-center gap-3 shrink-0">
+          {!isOnline && (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#B43C25]">
+              <WifiOff className="w-3.5 h-3.5" /> Offline
+            </span>
+          )}
+          <PWAInstallButton variant="compact" />
           <Link
             to="/get-started"
             className="px-5 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-sm font-semibold hover:bg-[#194231] transition-colors whitespace-nowrap shrink-0"
@@ -106,6 +115,9 @@ export function PublicHeader() {
           >
             {user ? 'Open Workspace' : 'Sign in'}
           </Link>
+          <div className="pt-1 flex flex-wrap items-center gap-2">
+            <PWAInstallButton variant="compact" />
+          </div>
           <Link
             to="/get-started"
             onClick={() => setMobileOpen(false)}

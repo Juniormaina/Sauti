@@ -60,34 +60,46 @@ const SAMPLE_TESTIMONIALS = [
   },
 ];
 
-const EXAMPLE_PLANS = [
+const PILOT_PARTICIPANTS = [
   {
-    name: 'Individual Starter',
-    price: 'Free preview',
-    period: 'Sample plan',
-    summary: 'Core CEFR lessons, Listen & Learn audio, and daily Voice Studio recording.',
-    features: ['Age-matched interface', 'A1–C2 starter courses', 'Browser audio & mic practice'],
-    cta: 'Try Starter',
-    accountType: 'individual',
+    badge: 'Learners · All Ages (A1–C2)',
+    title: 'Practise and share feedback',
+    summary:
+      'Explore age-matched spaces, complete interactive activities, and tell us what helps you speak with greater confidence.',
+    points: [
+      'Free access to starter courses and Voice Studio',
+      'No subscription or payment details required',
+      'Your feedback helps refine speaking activities and accessibility',
+    ],
+    cta: 'Register as a Learner',
+    to: '/register?accountType=individual',
   },
   {
-    name: 'Family & Plus',
-    price: 'Example · $9 / mo',
-    period: 'Illustrative pricing',
-    summary: 'Up to 4 learner profiles with parent privacy controls and full AI Voice Coach.',
-    features: ['Parent oversight & consent tools', 'Pronunciation transcript feedback', 'Live AI conversation studio'],
-    cta: 'Register as Parent',
-    accountType: 'parent',
+    badge: 'Parents & Guardians',
+    title: 'Evaluate children’s learning',
+    summary:
+      'Help us test how families guide young learners safely across Little Voices, Young Explorers, and Teen Voices.',
+    points: [
+      'Free family participation throughout the validation pilot',
+      'Built-in guardian consent and privacy controls',
+      'Share feedback on clarity, child safety, and pace',
+    ],
+    cta: 'Register as a Parent',
+    to: '/register?accountType=parent',
     highlighted: true,
   },
   {
-    name: 'Schools & Institutions',
-    price: 'Custom pilot',
-    period: 'Illustrative pricing',
-    summary: 'Classroom rosters, join codes, assigned CEFR modules, and cohort reporting.',
-    features: ['Unlimited classroom groups', 'Teacher progress dashboards', 'Child-safe privacy defaults'],
-    cta: 'Teacher & School Entry',
-    accountType: 'teacher',
+    badge: 'Teachers & Schools',
+    title: 'Provide classroom feedback',
+    summary:
+      'Test classroom rosters, join codes, and CEFR pathways with your students and share what works in real teaching settings.',
+    points: [
+      'No cost for teachers or participating pilot schools',
+      'No payment details or billing setup required',
+      'Help shape classroom tools, speaking prompts, and low-bandwidth access',
+    ],
+    cta: 'Register as a Teacher or School',
+    to: '/register?accountType=teacher',
   },
 ];
 
@@ -519,56 +531,61 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* 7. Pricing Preview (Example Plans) */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
-        <div className="max-w-2xl mb-10">
+      {/* 7. Free Validation Pilot Invitation */}
+      <section id="validation-pilot" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
+        <div className="max-w-3xl mb-10">
           <p className="text-xs font-semibold text-[#245C45] mb-1">
-            Example plans · Illustrative pricing preview
+            Open Validation Pilot · Free Participation
           </p>
-          <h2 className="font-display text-3xl font-bold mb-2">
-            Transparent pathways for individuals, families &amp; schools
+          <h2 className="font-display text-3xl font-bold mb-3">
+            Join the SAUTI Free Validation Pilot
           </h2>
-          <p className="text-sm text-[#4A5851]">
-            Final institutional and regional pricing can be configured per deployment.
+          <p className="text-base text-[#4A5851] leading-relaxed mb-3">
+            SAUTI is inviting parents, teachers, schools, and learners to help validate and improve
+            the learning experience. Participation is free during the validation pilot, and no
+            payment details are required.
+          </p>
+          <p className="text-sm text-[#4A5851] leading-relaxed">
+            Your feedback directly helps us improve speaking confidence, interactive learning
+            activities, and accessibility across devices and connection speeds.
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {EXAMPLE_PLANS.map((plan) => (
+          {PILOT_PARTICIPANTS.map((item) => (
             <div
-              key={plan.name}
+              key={item.title}
               className={`rounded-2xl p-7 border flex flex-col justify-between ${
-                plan.highlighted
+                item.highlighted
                   ? 'bg-[#245C45] text-[#FFF8ED] border-[#245C45]'
                   : 'bg-white text-[#17201C] border-[#245C45]/12'
               }`}
             >
               <div>
-                <p className={`text-xs mb-2 ${plan.highlighted ? 'text-[#F6C96B]' : 'text-[#4A5851]'}`}>
-                  {plan.period}
+                <p className={`text-xs mb-2 ${item.highlighted ? 'text-[#F6C96B]' : 'text-[#245C45] font-semibold'}`}>
+                  {item.badge}
                 </p>
-                <h3 className="font-display text-xl font-bold mb-1">{plan.name}</h3>
-                <p className="font-display text-2xl font-bold mb-3 tabular-nums">{plan.price}</p>
-                <p className={`text-sm mb-6 ${plan.highlighted ? 'text-[#FFF8ED]/85' : 'text-[#4A5851]'}`}>
-                  {plan.summary}
+                <h3 className="font-display text-xl font-bold mb-2">{item.title}</h3>
+                <p className={`text-sm mb-6 leading-relaxed ${item.highlighted ? 'text-[#FFF8ED]/85' : 'text-[#4A5851]'}`}>
+                  {item.summary}
                 </p>
                 <ul className="space-y-2.5 mb-8">
-                  {plan.features.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-sm">
+                  {item.points.map((point) => (
+                    <li key={point} className="flex items-start gap-2 text-sm">
                       <Check className="w-4 h-4 mt-0.5 shrink-0" />
-                      <span>{f}</span>
+                      <span>{point}</span>
                     </li>
                   ))}
                 </ul>
               </div>
               <Link
-                to={`/register?accountType=${plan.accountType}`}
-                className={`block text-center py-3 rounded-xl font-semibold text-sm transition-colors ${
-                  plan.highlighted
+                to={item.to}
+                className={`block text-center py-3 px-4 rounded-xl font-semibold text-sm transition-colors ${
+                  item.highlighted
                     ? 'bg-[#F6C96B] text-[#17201C] hover:bg-[#f8d487]'
                     : 'bg-[#245C45] text-[#FFF8ED] hover:bg-[#194231]'
                 }`}
               >
-                {plan.cta}
+                {item.cta}
               </Link>
             </div>
           ))}

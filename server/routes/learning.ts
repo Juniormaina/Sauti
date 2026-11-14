@@ -42,6 +42,7 @@ const aiActivityLimiter = createRateLimiter({
 
 const attemptSchema = z.object({
   learnerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  clientAttemptId: z.string().trim().min(1).max(80).optional(),
   answer: z.union([
     z.string().max(4000),
     z.array(z.string().max(200)).max(100),
@@ -280,6 +281,32 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
       return res.status(403).json({ error: 'This activity is outside your permitted learning environment.' });
     }
 
+    const clientAttemptId = parsed.data.clientAttemptId;
+    if (clientAttemptId) {
+      const [existingAttempt] = await db
+        .select()
+        .from(learningAttempts)
+        .where(
+          and(
+            eq(learningAttempts.learnerId, learner.id),
+            eq(learningAttempts.activityId, activity.id),
+            sql`${learningAttempts.answerJson}->>'clientAttemptId' = ${clientAttemptId}`
+          )
+        )
+        .limit(1);
+
+      if (existingAttempt) {
+        return res.json({
+          alreadyProcessed: true,
+          isCorrect: existingAttempt.isCorrect,
+          score: existingAttempt.score,
+          xpAwarded: 0,
+          alreadyMastered: existingAttempt.isCorrect,
+          feedback: existingAttempt.feedback,
+        });
+      }
+    }
+
     const answer = parsed.data.answer;
     const payload = activity.payloadJson as Record<string, any>;
     let isCorrect = false;
@@ -419,7 +446,7 @@ router.post('/activities/:id/attempt', requireAuth, async (req: AuthRequest, res
         learnerId: learner.id,
         lessonId: activity.lessonId,
         activityId: activity.id,
-        answerJson: { answer },
+        answerJson: clientAttemptId ? { answer, clientAttemptId } : { answer },
         isCorrect,
         score,
         xpAwarded,

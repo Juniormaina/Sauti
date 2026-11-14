@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Volume2 } from 'lucide-react';
+import { useOfflineStore } from '../../stores/offlineStore';
 
 interface ResilientImageProps {
   src: string;
@@ -10,8 +11,9 @@ interface ResilientImageProps {
 
 export function ResilientImage({ src, alt, className = '', fallbackTitle }: ResilientImageProps) {
   const [failed, setFailed] = useState(false);
+  const lowBandwidthMode = useOfflineStore((s) => s.lowBandwidthMode);
 
-  if (failed) {
+  if (failed || lowBandwidthMode) {
     return (
       <div
         className={`flex flex-col items-center justify-center bg-gradient-to-br from-[#FFF8ED] via-[#A9D9E8]/30 to-[#F6C96B]/30 p-6 text-center ${className}`}
@@ -22,6 +24,9 @@ export function ResilientImage({ src, alt, className = '', fallbackTitle }: Resi
         <span className="font-display text-sm font-semibold text-[#245C45]">
           {fallbackTitle || alt}
         </span>
+        {lowBandwidthMode && (
+          <span className="text-[11px] text-[#4A5851] mt-1">Image paused (Data-Saving Mode)</span>
+        )}
       </div>
     );
   }
@@ -30,6 +35,8 @@ export function ResilientImage({ src, alt, className = '', fallbackTitle }: Resi
     <img
       src={src}
       alt={alt}
+      loading="lazy"
+      decoding="async"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
       className={className}

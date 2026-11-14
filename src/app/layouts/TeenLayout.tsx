@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BarChart3, BookOpen, Compass, Flame, LogOut, Mic, Settings, Trophy } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
+import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
 
 export function TeenLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -77,6 +78,7 @@ export function TeenLayout({ children }: { children: ReactNode }) {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 pb-20 lg:pb-10">
+        <ConnectivityBanner />
         {children}
       </main>
 

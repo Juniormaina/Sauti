@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
+import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
 
 export function AdultLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -101,6 +102,7 @@ export function AdultLayout({ children }: { children: ReactNode }) {
         </header>
 
         <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-8 pb-24 lg:pb-12">
+          <ConnectivityBanner />
           {children}
         </main>
 

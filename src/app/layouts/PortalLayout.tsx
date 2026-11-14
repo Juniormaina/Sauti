@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LogOut, LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { firebaseAuth } from '../../lib/firebase';
+import { ConnectivityBanner } from '../../components/pwa/PWAStatusControls';
 
 export interface PortalNavItem {
   to: string;
@@ -89,7 +90,10 @@ export function PortalLayout({
         </div>
       </aside>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8">{children}</main>
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8">
+        <ConnectivityBanner />
+        {children}
+      </main>
     </div>
   );
 }

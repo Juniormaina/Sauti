@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Award, CheckCircle2, Flame } from 'lucide-react';
+import { Award, CheckCircle2, Flame, HardDrive, RefreshCw, Trash2, Zap } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { ENVIRONMENTS } from '../../utils/environments';
 import { CefrLevel, LearningEnvironment } from '../../types/sauti';
+import {
+  buildOfflineScopeKey,
+  formatBytes,
+  getScopeStorageSummary,
+  ScopeStorageSummary,
+} from '../../lib/offlineDb';
+import { useOfflineStore } from '../../stores/offlineStore';
 
 export function LearnerAchievementsPage() {
   const { activeChildId } = useAuthStore();
@@ -131,6 +138,18 @@ export function LearnerHistoryPage() {
 
 export function LearnerProfileSettingsPage() {
   const { user, learnerProfile, activeChildId, setLearnerProfile } = useAuthStore();
+  const {
+    isOnline,
+    lowBandwidthMode,
+    pendingSyncCount,
+    isSyncing,
+    setLowBandwidthMode,
+    syncPendingQueue,
+    clearPendingQueue,
+    clearActiveScopeData,
+  } = useOfflineStore();
+  const scopeKey = buildOfflineScopeKey(user?.id, activeChildId ?? learnerProfile?.id ?? null);
+
   const [displayName, setDisplayName] = useState(learnerProfile?.displayName || '');
   const [environment, setEnvironment] = useState<LearningEnvironment>(
     learnerProfile?.environment || 'young_adults'
@@ -139,6 +158,18 @@ export function LearnerProfileSettingsPage() {
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState(learnerProfile?.dailyGoalMinutes || 15);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [storageSummary, setStorageSummary] = useState<ScopeStorageSummary | null>(null);
+
+  const loadStorageSummary = () => {
+    getScopeStorageSummary(scopeKey)
+      .then(setStorageSummary)
+      .catch(() => setStorageSummary(null));
+  };
+
+  useEffect(() => {
+    loadStorageSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey, pendingSyncCount]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,6 +191,12 @@ export function LearnerProfileSettingsPage() {
     } catch (err: any) {
       setErrMsg(err.message || 'Unable to update learner settings.');
     }
+  };
+
+  const handleClearOffline = async () => {
+    await clearActiveScopeData();
+    loadStorageSummary();
+    setSavedMsg('Cleared all locally stored lessons, recordings, and sync items for this learner.');
   };
 
   return (
@@ -245,6 +282,92 @@ export function LearnerProfileSettingsPage() {
           Save preferences
         </button>
       </form>
+
+      {/* Offline, Data-Saving & Device Privacy Controls */}
+      <section className="rounded-3xl bg-white border border-[#245C45]/12 p-7 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-display text-xl font-bold flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-[#245C45]" />
+              <span>Offline Access, Data-Saving &amp; Local Privacy</span>
+            </h2>
+            <p className="text-xs text-[#4A5851] mt-1">
+              Offline downloads and local recordings are isolated strictly to this learner profile on
+              this browser.
+            </p>
+          </div>
+        </div>
+
+        <label className="flex items-start justify-between gap-4 rounded-2xl bg-[#FDF3E3] p-4 cursor-pointer">
+          <div className="space-y-1">
+            <span className="font-display font-bold text-sm flex items-center gap-1.5">
+              <Zap className="w-4 h-4 text-[#245C45]" />
+              <span>Data-Saving Mode</span>
+            </span>
+            <p className="text-xs text-[#4A5851]">
+              Skips decorative image downloads and uses your device&apos;s built-in SpeechSynthesis
+              voice instead of downloading server audio files.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={lowBandwidthMode}
+            onChange={(e) => setLowBandwidthMode(e.target.checked)}
+            className="mt-1 h-4 w-4 accent-[#245C45]"
+          />
+        </label>
+
+        {storageSummary && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+            <div className="rounded-xl bg-[#FFF8ED] border border-[#245C45]/10 p-3">
+              <p className="text-[#4A5851]">Offline lessons</p>
+              <p className="font-display font-bold text-lg tabular-nums">{storageSummary.lessonCount}</p>
+            </div>
+            <div className="rounded-xl bg-[#FFF8ED] border border-[#245C45]/10 p-3">
+              <p className="text-[#4A5851]">Saved recordings</p>
+              <p className="font-display font-bold text-lg tabular-nums">{storageSummary.recordingCount}</p>
+            </div>
+            <div className="rounded-xl bg-[#FFF8ED] border border-[#245C45]/10 p-3">
+              <p className="text-[#4A5851]">Local storage used</p>
+              <p className="font-display font-bold text-lg tabular-nums">
+                {formatBytes(storageSummary.totalBytes)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          {pendingSyncCount > 0 && (
+            <>
+              <button
+                type="button"
+                disabled={!isOnline || isSyncing}
+                onClick={() => void syncPendingQueue()}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-xs font-semibold disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>Sync {pendingSyncCount} queued update(s)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void clearPendingQueue()}
+                className="px-4 py-2.5 rounded-xl border border-[#245C45]/20 text-xs font-semibold text-[#4A5851]"
+              >
+                Clear sync queue
+              </button>
+            </>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void handleClearOffline()}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-[#F28B75] text-xs font-semibold text-[#B43C25] hover:bg-[#F28B75]/10"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Clear locally stored learner data</span>
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
