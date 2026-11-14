@@ -24,7 +24,7 @@ async function startServer() {
           server,
           path: '/__vite_ws',
         },
-        allowedHosts: true,
+        allowedHosts: env.viteAllowedHosts,
       },
       appType: 'spa',
     });

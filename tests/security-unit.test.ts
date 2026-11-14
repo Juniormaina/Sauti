@@ -10,6 +10,8 @@ import {
   isAuthenticatedNonBrowserClient,
   isCapabilityConfigured,
   isPermittedOrigin,
+  isTrustedAiStudioPreviewHostname,
+  parseViteAllowedHosts,
   requireConfiguredModel,
   validateAiConfiguration,
 } from '../server/config/env.ts';
@@ -492,4 +494,42 @@ test('AI model configuration avoids hardcoded fallbacks, keeps capabilities inde
   // Quota and model-availability error sanitization
   assert.match(sanitizeAiErrorMessage({ status: 429 }, 'fallback'), /quota|rate limit/i);
   assert.match(sanitizeAiErrorMessage({ status: 404 }, 'fallback'), /unavailable|unsupported/i);
+});
+
+test('Vite allowedHosts allowlist permits only localhost and validated Google AI Studio preview hostnames', () => {
+  const hosts = parseViteAllowedHosts({
+    appUrl: 'https://ais-dev-ylp57f6aavwjwl6mvacsju-852010850950.europe-west2.run.app/',
+    allowedOrigins: [
+      'https://ais-pre-ylp57f6aavwjwl6mvacsju-852010850950.europe-west2.run.app',
+      'https://evil.example.com',
+      'https://not-ais-something.europe-west2.run.app',
+      'https://*.run.app',
+      'http://localhost:3000',
+      'javascript:alert(1)',
+    ].join(','),
+    ngAllowedHosts: [
+      'ais-dev-ylp57f6aavwjwl6mvacsju-852010850950.europe-west2.run.app',
+      '.run.app',
+      '*',
+      'attacker.com',
+      'ais-dev-foo.run.app:8080',
+      'ais-dev-foo.run.app/path',
+      'user@ais-dev-foo.run.app',
+    ].join(','),
+  });
+
+  assert.deepEqual(hosts, [
+    'localhost',
+    '127.0.0.1',
+    'ais-dev-ylp57f6aavwjwl6mvacsju-852010850950.europe-west2.run.app',
+    'ais-pre-ylp57f6aavwjwl6mvacsju-852010850950.europe-west2.run.app',
+  ]);
+
+  assert.equal(isTrustedAiStudioPreviewHostname('ais-dev-abc123.us-central1.run.app'), true);
+  assert.equal(isTrustedAiStudioPreviewHostname('ais-pre-abc123.europe-west2.run.app'), true);
+  assert.equal(isTrustedAiStudioPreviewHostname('.run.app'), false);
+  assert.equal(isTrustedAiStudioPreviewHostname('*.run.app'), false);
+  assert.equal(isTrustedAiStudioPreviewHostname('evil.run.app'), false);
+  assert.equal(isTrustedAiStudioPreviewHostname('evil.example.com'), false);
+  assert.equal(isTrustedAiStudioPreviewHostname('ais-dev-abc123.run.app:3000'), false);
 });

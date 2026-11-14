@@ -122,6 +122,91 @@ function parseAllowedOrigins(): string[] {
   return Array.from(origins);
 }
 
+const EXACT_HOSTNAME_REGEX =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const AI_STUDIO_PREVIEW_HOST_REGEX =
+  /^ais-(?:dev|pre)-[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app$/;
+
+export function isValidExactHostname(raw?: string | null): boolean {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed.length > 253) return false;
+  if (
+    trimmed.startsWith('.') ||
+    trimmed.includes('*') ||
+    trimmed.includes(':') ||
+    trimmed.includes('/') ||
+    trimmed.includes('@') ||
+    trimmed.includes('?') ||
+    trimmed.includes('#') ||
+    /\s/.test(trimmed) ||
+    trimmed === 'my_app_url'
+  ) {
+    return false;
+  }
+  return EXACT_HOSTNAME_REGEX.test(trimmed);
+}
+
+export function isTrustedAiStudioPreviewHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return isValidExactHostname(normalized) && AI_STUDIO_PREVIEW_HOST_REGEX.test(normalized);
+}
+
+export function parseViteAllowedHosts(options?: {
+  appUrl?: string;
+  allowedOrigins?: string;
+  ngAllowedHosts?: string;
+}): string[] {
+  const hosts = new Set<string>(['localhost', '127.0.0.1']);
+
+  const addHostnameFromOriginCandidate = (raw?: string) => {
+    const trimmed = raw?.trim();
+    if (!trimmed || trimmed === 'MY_APP_URL' || trimmed === '*') return;
+    const normalizedOrigin = normalizeOrigin(trimmed);
+    if (!normalizedOrigin) return;
+    try {
+      const hostname = new URL(normalizedOrigin).hostname.toLowerCase();
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        isTrustedAiStudioPreviewHostname(hostname)
+      ) {
+        hosts.add(hostname);
+      }
+    } catch {
+      // Ignore malformed origin candidates
+    }
+  };
+
+  const appUrlRaw = options?.appUrl !== undefined ? options.appUrl : process.env.APP_URL;
+  addHostnameFromOriginCandidate(appUrlRaw);
+
+  const allowedOriginsRaw =
+    options?.allowedOrigins !== undefined ? options.allowedOrigins : process.env.ALLOWED_ORIGINS;
+  if (allowedOriginsRaw) {
+    for (const part of allowedOriginsRaw.split(',')) {
+      addHostnameFromOriginCandidate(part);
+    }
+  }
+
+  const ngAllowedHostsRaw =
+    options?.ngAllowedHosts !== undefined ? options.ngAllowedHosts : process.env.NG_ALLOWED_HOSTS;
+  if (ngAllowedHostsRaw) {
+    for (const part of ngAllowedHostsRaw.split(',')) {
+      const trimmed = part.trim().toLowerCase();
+      if (
+        trimmed === 'localhost' ||
+        trimmed === '127.0.0.1' ||
+        isTrustedAiStudioPreviewHostname(trimmed)
+      ) {
+        hosts.add(trimmed);
+      }
+    }
+  }
+
+  return Array.from(hosts);
+}
+
 function resolveRuntimeTrustProxy(): ParsedTrustProxyConfig {
   const raw = process.env.TRUST_PROXY;
   if (raw !== undefined && raw.trim().length > 0) {
@@ -172,6 +257,7 @@ export const env = {
   nodeEnv,
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   allowedOrigins: parseAllowedOrigins(),
+  viteAllowedHosts: parseViteAllowedHosts(),
   trustProxy: resolveRuntimeTrustProxy(),
   nonBrowserWs: {
     enabled: nonBrowserWsEnabled && nonBrowserWsKey.length >= 16,
