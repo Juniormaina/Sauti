@@ -7,9 +7,21 @@ interface ResilientImageProps {
   alt: string;
   className?: string;
   fallbackTitle?: string;
+  srcSet?: string;
+  sizes?: string;
+  /** Above-the-fold images should not be lazy-loaded. */
+  eager?: boolean;
 }
 
-export function ResilientImage({ src, alt, className = '', fallbackTitle }: ResilientImageProps) {
+export function ResilientImage({
+  src,
+  alt,
+  className = '',
+  fallbackTitle,
+  srcSet,
+  sizes,
+  eager = false,
+}: ResilientImageProps) {
   const [failed, setFailed] = useState(false);
   const lowBandwidthMode = useOfflineStore((s) => s.lowBandwidthMode);
 
@@ -34,8 +46,10 @@ export function ResilientImage({ src, alt, className = '', fallbackTitle }: Resi
   return (
     <img
       src={src}
+      srcSet={srcSet}
+      sizes={sizes}
       alt={alt}
-      loading="lazy"
+      loading={eager ? 'eager' : 'lazy'}
       decoding="async"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}

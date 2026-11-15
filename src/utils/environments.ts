@@ -1,17 +1,13 @@
 import { AgeRange, CefrLevel, LearningEnvironment } from '../types/sauti';
 
-import heroVoicesImg from '../assets/images/hero_sauti_voices_1794596039213.jpg';
-import littleVoicesImg from '../assets/images/journey_little_voices_1794596040249.jpg';
-import teenAdultImg from '../assets/images/journey_teen_adult_1794596040545.jpg';
-import professionalLifelongImg from '../assets/images/journey_professional_lifelong_1794596041360.jpg';
-import voiceCompanionImg from '../assets/images/voice_studio_companion_1794596041274.jpg';
+import { photo, type PhotoKey } from './photos';
 
+/** Generated placeholder scenes (see src/assets/images/photo). Swap for real photography later. */
 export const SAUTI_IMAGES = {
-  heroVoices: heroVoicesImg,
-  littleVoices: littleVoicesImg,
-  teenAdult: teenAdultImg,
-  professionalLifelong: professionalLifelongImg,
-  voiceCompanion: voiceCompanionImg,
+  heroVoices: photo('hero').src,
+  littleVoices: photo('little-voices').src,
+  teenAdult: photo('teens').src,
+  professionalLifelong: photo('professional').src,
 };
 
 export interface EnvironmentMeta {
@@ -24,6 +20,7 @@ export interface EnvironmentMeta {
   accentHex: string;
   surfaceHex: string;
   image: string;
+  photoKey: PhotoKey;
   highlights: string[];
 }
 
@@ -34,11 +31,12 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     ageRange: '3-5',
     tagline: 'Playful sounds, picture stories & first words',
     description:
-      'Audio-led discovery with friendly illustrations, oversized touch targets, and gentle letter-sound songs.',
+      'Audio-led discovery with friendly visuals, oversized touch targets, and gentle letter-sound songs.',
     layoutGroup: 'kids',
     accentHex: '#F28B75',
     surfaceHex: '#FFF1E6',
-    image: SAUTI_IMAGES.littleVoices,
+    image: photo('little-voices').src,
+    photoKey: 'little-voices',
     highlights: ['Picture-led lessons', 'Zero reading pressure', 'Parent-guided safety'],
   },
   {
@@ -51,7 +49,8 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     layoutGroup: 'kids',
     accentHex: '#F6C96B',
     surfaceHex: '#FEF8E6',
-    image: SAUTI_IMAGES.littleVoices,
+    image: photo('young-explorers').src,
+    photoKey: 'young-explorers',
     highlights: ['Story comprehension', 'Sentence builders', 'Gentle voice practice'],
   },
   {
@@ -64,7 +63,8 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     layoutGroup: 'teen',
     accentHex: '#245C45',
     surfaceHex: '#EBF4EF',
-    image: SAUTI_IMAGES.teenAdult,
+    image: photo('teens').src,
+    photoKey: 'teens',
     highlights: ['Opinion & debate studio', 'Podcast-style speaking', 'All CEFR levels A1–C2'],
   },
   {
@@ -77,7 +77,8 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     layoutGroup: 'teen',
     accentHex: '#245C45',
     surfaceHex: '#EEF7FA',
-    image: SAUTI_IMAGES.teenAdult,
+    image: photo('young-adults').src,
+    photoKey: 'young-adults',
     highlights: ['Seminar turn-taking', 'Interview simulations', 'Real-world fluency'],
   },
   {
@@ -90,7 +91,8 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     layoutGroup: 'adult',
     accentHex: '#245C45',
     surfaceHex: '#F4EFE6',
-    image: SAUTI_IMAGES.professionalLifelong,
+    image: photo('professional').src,
+    photoKey: 'professional',
     highlights: ['Executive meetings', 'Client communication', 'Concise writing'],
   },
   {
@@ -103,7 +105,8 @@ export const ENVIRONMENTS: EnvironmentMeta[] = [
     layoutGroup: 'adult',
     accentHex: '#245C45',
     surfaceHex: '#F6F1E7',
-    image: SAUTI_IMAGES.professionalLifelong,
+    image: photo('lifelong').src,
+    photoKey: 'lifelong',
     highlights: ['Unhurried pacing', 'Travel & hospitality', 'Large readable type'],
   },
 ];

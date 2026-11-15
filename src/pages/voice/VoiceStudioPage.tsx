@@ -24,8 +24,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { apiFetch } from '../../services/api';
 import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
-import { ResilientImage } from '../../components/ui/ResilientImage';
-import { SAUTI_IMAGES } from '../../utils/environments';
+import { ZuriMascot } from '../../components/mascot/ZuriMascot';
 import {
   PageTransition,
   SAUTI_EASE,
@@ -661,12 +660,13 @@ export function VoiceStudioPage() {
       <div className="rounded-3xl sauti-surface-warm bg-editorial-dots p-6 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
         <div className="flex items-start sm:items-center gap-4">
           <div className="w-14 h-14 rounded-2xl overflow-hidden border border-[#245C45]/15 bg-white shrink-0 shadow-sm">
-            <ResilientImage
-              src={SAUTI_IMAGES.voiceCompanion}
-              alt="Zuri, the SAUTI voice companion"
-              className="w-full h-full object-cover"
-              fallbackTitle="Zuri"
-            />
+            <div
+              role="img"
+              aria-label="Zuri, the SAUTI voice companion"
+              className="flex h-full w-full items-center justify-center bg-[#FFF1E6]"
+            >
+              <ZuriMascot headOnly size={46} />
+            </div>
           </div>
           <div>
             <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
@@ -1276,11 +1276,13 @@ export function VoiceStudioPage() {
           <div className="lg:col-span-4 rounded-3xl sauti-surface p-6 space-y-5">
             <div className="space-y-3">
               <div className="flex items-center gap-4">
-                <ResilientImage
-                  src={SAUTI_IMAGES.voiceCompanion}
-                  alt="SAUTI AI Voice Companion"
-                  className="w-16 h-16 rounded-2xl object-cover shrink-0"
-                />
+                <span
+                  role="img"
+                  aria-label="SAUTI AI Voice Companion"
+                  className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#FFF1E6]"
+                >
+                  <ZuriMascot headOnly size={54} />
+                </span>
                 <div>
                   <h2 className="font-display text-lg font-bold">SAUTI Companion</h2>
                   <p className="text-xs text-[#245C45] font-medium">
