@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { animate, AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ZuriMascot, type MascotPose } from './ZuriMascot';
+import { ZuriMascot, maxSpriteHeight, spriteSize, type MascotPose } from './ZuriMascot';
 
-const SIZE = 104;
 const GROUND = 6;
 const INTERACTIVE = 'a,button,input,select,textarea,label,summary,[role="button"],[role="link"],[contenteditable="true"]';
+const WALK_SPEED = 170; // px per second
+const STRIDE = 1.9; // head-widths covered per walk cycle, so the feet do not slide
 
 interface TapScene {
   id: number;
@@ -14,19 +15,22 @@ interface TapScene {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+const headFor = (vw: number) => Math.round(clamp(vw / 12, 60, 108));
 
 /** Mascot A crosses the whole page along the bottom edge. */
 function Walker({ dir, onDone }: { dir: 1 | -1; onDone: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const vw = typeof window === 'undefined' ? 1024 : window.innerWidth;
+  const head = headFor(vw);
+  const { w } = spriteSize('walk', head);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let cancelled = false;
-    const vw = window.innerWidth;
-    const from = dir === 1 ? -SIZE - 24 : vw + 24;
-    const to = dir === 1 ? vw + 24 : -SIZE - 24;
-    const controls = animate(el, { x: [from, to] }, { duration: Math.max(3.2, vw / 200), ease: 'linear' });
+    const from = dir === 1 ? -w - 24 : vw + 24;
+    const to = dir === 1 ? vw + 24 : -w - 24;
+    const controls = animate(el, { x: [from, to] }, { duration: Math.abs(to - from) / WALK_SPEED, ease: 'linear' });
     controls.then(() => {
       if (!cancelled) onDone();
     });
@@ -38,28 +42,24 @@ function Walker({ dir, onDone }: { dir: 1 | -1; onDone: () => void }) {
   }, []);
 
   return (
-    <div
-      ref={ref}
-      className="absolute left-0"
-      style={{ bottom: GROUND, width: SIZE, transform: 'translateX(-9999px)' }}
-    >
-      <ZuriMascot pose="walk" facing={dir} size={SIZE} />
+    <div ref={ref} className="absolute left-0" style={{ bottom: GROUND, transform: 'translateX(-9999px)' }}>
+      <ZuriMascot pose="walk" facing={dir} size={head} walkPeriod={(STRIDE * head) / WALK_SPEED} />
     </div>
   );
 }
 
 /** Three soft puffs kicked up at the feet on landing. */
-function DustPuff() {
+function DustPuff({ spread }: { spread: number }) {
   return (
     <>
       {[-1, 0, 1].map((n) => (
         <motion.span
           key={n}
           initial={{ opacity: 0.55, scale: 0.4, x: 0, y: 0 }}
-          animate={{ opacity: 0, scale: 1.5, x: n * 34, y: -10 - Math.abs(n) * -4 }}
+          animate={{ opacity: 0, scale: 1.5, x: n * spread, y: -10 - (1 - Math.abs(n)) * 8 }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
           className="absolute rounded-full bg-[#D9CDB6]"
-          style={{ left: SIZE / 2 - 9, bottom: 0, width: 18, height: 18 }}
+          style={{ left: -9, bottom: 0, width: 18, height: 18 }}
         />
       ))}
     </>
@@ -68,7 +68,7 @@ function DustPuff() {
 
 /**
  * Mascot B drops in from above at the tap point, lands on its back, laughs,
- * gets back up and walks off towards the nearest edge.
+ * pushes itself up, waves and walks off towards the nearest edge.
  */
 function Faller({ x, onDone }: { x: number; onDone: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -79,9 +79,11 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
 
   const vw = typeof window === 'undefined' ? 1024 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 768 : window.innerHeight;
-  // Leave room on the right for the lying body.
-  const left = clamp(x - SIZE / 2, 8, Math.max(8, vw - SIZE * 2.3));
-  const groundY = vh - SIZE * 1.42 - GROUND;
+  const head = headFor(vw);
+  const tall = maxSpriteHeight(head);
+  const widest = Math.max(spriteSize('laugh', head).w, spriteSize('getup', head).w);
+  const cx = clamp(x, widest / 2 + 8, Math.max(widest / 2 + 8, vw - widest / 2 - 8));
+  const groundY = vh - tall - GROUND;
 
   useEffect(() => {
     const el = ref.current;
@@ -96,49 +98,49 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
 
     (async () => {
       // 1. Fall from above the viewport, stretching as it speeds up.
-      run({ scaleY: [1, 1.14], scaleX: [1, 0.92] }, { duration: 0.7, ease: 'easeIn' });
-      await run({ y: [-SIZE * 1.6, groundY] }, { duration: 0.7, ease: [0.55, 0, 1, 0.45] });
+      run({ scaleY: [1, 1.08], scaleX: [1, 0.96] }, { duration: 0.7, ease: 'easeIn' });
+      await run({ y: [-tall * 1.4, groundY] }, { duration: 0.7, ease: [0.55, 0, 1, 0.45] });
       if (cancelled) return;
 
       // 2. Land on its back: heavy squash, a small rebound, then settle. Dust puffs out.
       setPose('lying');
       setDust((d) => d + 1);
       await run(
-        { scaleY: [1.14, 0.72, 1.06, 0.96, 1], scaleX: [0.92, 1.22, 0.97, 1.02, 1] },
+        { scaleY: [1.08, 0.78, 1.05, 0.97, 1], scaleX: [0.96, 1.16, 0.98, 1.02, 1] },
         { duration: 0.5, ease: 'easeOut', times: [0, 0.22, 0.5, 0.75, 1] }
       );
       if (cancelled) return;
-      await wait(220);
+      await wait(180);
       if (cancelled) return;
 
       // 3. Laugh.
       setPose('laugh');
       setLaughing(true);
-      await wait(1700);
+      await wait(1800);
       if (cancelled) return;
       setLaughing(false);
 
-      // 4. Get up: crouch to wind up, spring into a hop, land with a little squash.
-      setPose('idle');
-      await wait(380);
+      // 4. Push up off the floor, then spring to standing with a wave.
+      setPose('getup');
+      await wait(650);
       if (cancelled) return;
-      await run({ scaleY: [1, 0.88], scaleX: [1, 1.08] }, { duration: 0.16, ease: 'easeOut' });
-      if (cancelled) return;
+      setPose('wave');
       await run(
-        { y: [groundY, groundY - 30, groundY], scaleY: [0.88, 1.1, 0.9, 1], scaleX: [1.08, 0.94, 1.08, 1] },
+        { y: [groundY, groundY - 26, groundY], scaleY: [0.92, 1.06, 0.94, 1], scaleX: [1.05, 0.96, 1.05, 1] },
         { duration: 0.42, ease: 'easeOut', times: [0, 0.5, 0.85, 1] }
       );
       if (cancelled) return;
       setDust((d) => d + 1);
-      await wait(180);
+      await wait(700);
       if (cancelled) return;
 
       // 5. Walk away towards the nearer edge.
-      const dir: 1 | -1 = left + SIZE / 2 < vw / 2 ? -1 : 1;
+      const dir: 1 | -1 = cx < vw / 2 ? -1 : 1;
       setFacing(dir);
       setPose('walk');
-      const distance = dir === 1 ? vw - left + SIZE : left + SIZE * 2;
-      await run({ x: dir === 1 ? distance : -distance }, { duration: Math.max(2, distance / 190), ease: 'linear' });
+      const walkW = spriteSize('walk', head).w;
+      const distance = dir === 1 ? vw - cx + walkW : cx + walkW;
+      await run({ x: dir === 1 ? distance : -distance }, { duration: distance / WALK_SPEED, ease: 'linear' });
       if (!cancelled) onDone();
     })();
 
@@ -149,19 +151,29 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const laughSize = spriteSize('laugh', head);
+
   return (
     <div
       ref={ref}
       className="absolute top-0"
       style={{
-        left,
-        width: SIZE,
-        transform: `translateY(${-SIZE * 1.6}px)`,
-        transformOrigin: '50% 100%',
+        left: cx,
+        width: 0,
+        height: tall,
+        transform: `translateY(${-tall * 1.4}px)`,
+        transformOrigin: '0 100%',
       }}
     >
-      <ZuriMascot pose={pose} facing={facing} size={SIZE} />
-      {dust > 0 && <DustPuff key={dust} />}
+      <div className="absolute bottom-0 left-0" style={{ transform: 'translateX(-50%)' }}>
+        <ZuriMascot
+          pose={pose}
+          facing={facing}
+          size={head}
+          walkPeriod={(STRIDE * head) / WALK_SPEED}
+        />
+      </div>
+      {dust > 0 && <DustPuff key={dust} spread={head * 0.8} />}
       <AnimatePresence>
         {laughing && (
           <motion.span
@@ -170,7 +182,7 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
             exit={{ opacity: 0, scale: 0.8 }}
             transition={{ duration: 0.5, y: { duration: 0.45, repeat: Infinity } }}
             className="absolute whitespace-nowrap rounded-full bg-[#F6C96B] px-3 py-1 font-display text-sm font-bold text-[#17201C] shadow-sm"
-            style={{ left: SIZE * 1.05, bottom: SIZE * 0.85 }}
+            style={{ left: laughSize.w * 0.22, bottom: laughSize.h + 6 }}
           >
             ha ha ha!
           </motion.span>
