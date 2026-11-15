@@ -238,11 +238,21 @@ export const AI_MODEL_ENV_KEYS: Record<AiCapability, string> = {
   live: 'GEMINI_LIVE_MODEL',
 };
 
+export const DEFAULT_LIVE_MODEL = 'gemini-3.8-live';
+
 function readModelEnv(envKey: string): string | null {
   const raw = process.env[envKey];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveLiveModelEnv(rawValue: string | undefined = process.env[AI_MODEL_ENV_KEYS.live]): string | null {
+  if (typeof rawValue !== 'string') return DEFAULT_LIVE_MODEL;
+  const trimmed = rawValue.trim();
+  if (!trimmed) return DEFAULT_LIVE_MODEL;
+  if (/^(disabled|off|none)$/i.test(trimmed)) return null;
+  return trimmed;
 }
 
 function isValidModelIdentifier(model: string): boolean {
@@ -274,7 +284,7 @@ export const env = {
     tts: readModelEnv(AI_MODEL_ENV_KEYS.tts),
     multiTts: readModelEnv(AI_MODEL_ENV_KEYS.multiTts),
     transcribe: readModelEnv(AI_MODEL_ENV_KEYS.transcribe),
-    live: readModelEnv(AI_MODEL_ENV_KEYS.live),
+    live: resolveLiveModelEnv(),
   } as Record<AiCapability, string | null>,
 };
 

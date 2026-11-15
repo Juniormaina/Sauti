@@ -72,11 +72,20 @@ export function sanitizeAiErrorMessage(err: unknown, fallbackMessage: string): s
   if (status === 429 || status === 'RESOURCE_EXHAUSTED' || /RESOURCE_EXHAUSTED|quota/i.test(msg)) {
     return 'Free-tier AI quota or rate limit reached. Please pause briefly or continue in local practice mode.';
   }
-  if (status === 404 || status === 'NOT_FOUND' || /NOT_FOUND/i.test(msg)) {
+  if (
+    status === 404 ||
+    status === 'NOT_FOUND' ||
+    /NOT_FOUND|not found|not supported for bidiGenerateContent/i.test(msg)
+  ) {
     return 'The configured AI model is unavailable or unsupported for this account.';
   }
-  if (status === 401 || status === 403 || status === 'PERMISSION_DENIED') {
-    return 'AI provider credentials do not have access to this configured model.';
+  if (
+    status === 401 ||
+    status === 403 ||
+    status === 'PERMISSION_DENIED' ||
+    /API_KEY_INVALID|API key not valid|PERMISSION_DENIED|UNAUTHENTICATED/i.test(msg)
+  ) {
+    return 'AI provider credentials were rejected or lack access to this model. Check GEMINI_API_KEY in Settings > Secrets.';
   }
   return fallbackMessage;
 }
@@ -87,7 +96,6 @@ export function getGeminiClient(): GoogleGenAI | null {
     _aiClient = new GoogleGenAI({
       apiKey: env.geminiApiKey,
       httpOptions: {
-        apiVersion: 'v1beta',
         headers: {
           'User-Agent': 'aistudio-build',
         },

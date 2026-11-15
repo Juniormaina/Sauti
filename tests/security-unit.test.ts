@@ -4,6 +4,7 @@ import express from 'express';
 import http from 'node:http';
 import {
   assertAiConfigurationOnStartup,
+  DEFAULT_LIVE_MODEL,
   env,
   getAiCapabilitiesStatus,
   getConfiguredModel,
@@ -13,6 +14,7 @@ import {
   isTrustedAiStudioPreviewHostname,
   parseViteAllowedHosts,
   requireConfiguredModel,
+  resolveLiveModelEnv,
   validateAiConfiguration,
 } from '../server/config/env.ts';
 import { parseTrustProxyConfig, resolveClientIp } from '../server/config/trustProxy.ts';
@@ -410,13 +412,19 @@ test('SAUTI companion enforces Swahili pronunciation (sah-OO-tee /sɑˈu.ti/) ac
   );
 });
 
-test('AI model configuration avoids hardcoded fallbacks, keeps capabilities independent, and validates startup configuration', () => {
-  // Without GEMINI_*_MODEL env vars set, env.models must not silently fall back to hardcoded models
+test('AI model configuration connects gemini-3.8-live for Live Voice while keeping other capabilities independent', () => {
+  // Non-live GEMINI_*_MODEL env vars remain null unless explicitly configured
   if (!process.env.GEMINI_TEXT_MODEL) assert.equal(env.models.text, null);
   if (!process.env.GEMINI_TTS_MODEL) assert.equal(env.models.tts, null);
   if (!process.env.GEMINI_MULTI_TTS_MODEL) assert.equal(env.models.multiTts, null);
   if (!process.env.GEMINI_TRANSCRIBE_MODEL) assert.equal(env.models.transcribe, null);
-  if (!process.env.GEMINI_LIVE_MODEL) assert.equal(env.models.live, null);
+
+  // Live AI Voice connects to gemini-3.8-live by default, allows custom env overrides, and supports explicit disable
+  if (!process.env.GEMINI_LIVE_MODEL) assert.equal(env.models.live, DEFAULT_LIVE_MODEL);
+  assert.equal(resolveLiveModelEnv(undefined), 'gemini-3.8-live');
+  assert.equal(resolveLiveModelEnv(''), 'gemini-3.8-live');
+  assert.equal(resolveLiveModelEnv('gemini-3.8-live-extended-thinking'), 'gemini-3.8-live-extended-thinking');
+  assert.equal(resolveLiveModelEnv('disabled'), null);
 
   // Missing model must throw explicitly rather than falling back to a hardcoded identifier
   assert.throws(

@@ -321,73 +321,82 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
           sendJson({
             type: 'demo_mode',
             message:
-              `Live AI voice is not configured on this server (requires GEMINI_API_KEY and ${AI_MODEL_ENV_KEYS.live}). Switching to clearly labelled local Demo Mode.`,
+              !ai
+                ? `Live AI voice model (${liveModel || 'gemini-3.8-live'}) is ready, but GEMINI_API_KEY is not set on this server. Add GEMINI_API_KEY in Settings > Secrets to connect, or practise in Demo Mode below.`
+                : `Live AI voice is not configured on this server (${AI_MODEL_ENV_KEYS.live}). Switching to clearly labelled local Demo Mode.`,
           });
           cleanup();
           clientWs.close(1000, 'Demo mode');
           return;
         }
 
-      try {
-        const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
-        const selectedVoice = validVoices.includes(ticket.voiceName) ? ticket.voiceName : 'Zephyr';
+        let sessionReady = false;
+        try {
+          const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
+          const selectedVoice = validVoices.includes(ticket.voiceName) ? ticket.voiceName : 'Zephyr';
 
-        session = await ai.live.connect({
-          model: liveModel,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
+          session = await ai.live.connect({
+            model: liveModel,
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
+              },
+              inputAudioTranscription: {},
+              outputAudioTranscription: {},
+              systemInstruction: buildLiveSystemInstruction(
+                ticket.mode,
+                learner.environment,
+                learner.ageRange,
+                learner.cefrLevel
+              ),
             },
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
-            systemInstruction: buildLiveSystemInstruction(
-              ticket.mode,
-              learner.environment,
-              learner.ageRange,
-              learner.cefrLevel
-            ),
-          },
-          callbacks: {
-            onopen: () => {
-              sendJson({ type: 'ready', model: liveModel });
-            },
-            onmessage: (message: LiveServerMessage) => {
-              if (clientWs.readyState !== WebSocket.OPEN) return;
-              const content = message.serverContent;
-              if (content?.inputTranscription?.text) {
-                sendJson({ type: 'input_transcript', text: content.inputTranscription.text });
-              }
-              if (content?.outputTranscription?.text) {
-                sendJson({ type: 'output_transcript', text: content.outputTranscription.text });
-              }
-              for (const part of content?.modelTurn?.parts ?? []) {
-                if (part.inlineData?.data) {
-                  sendJson({ type: 'audio', audio: part.inlineData.data });
+            callbacks: {
+              onmessage: (message: LiveServerMessage) => {
+                if (clientWs.readyState !== WebSocket.OPEN) return;
+                const content = message.serverContent;
+                if (content?.inputTranscription?.text) {
+                  sendJson({ type: 'input_transcript', text: content.inputTranscription.text });
                 }
-              }
-              if (content?.interrupted) {
-                sendJson({ type: 'interrupted' });
-              }
-              if (content?.turnComplete) {
-                sendJson({ type: 'turn_complete' });
-              }
+                if (content?.outputTranscription?.text) {
+                  sendJson({ type: 'output_transcript', text: content.outputTranscription.text });
+                }
+                for (const part of content?.modelTurn?.parts ?? []) {
+                  if (part.inlineData?.data) {
+                    sendJson({ type: 'audio', audio: part.inlineData.data });
+                  }
+                }
+                if (content?.interrupted) {
+                  sendJson({ type: 'interrupted' });
+                }
+                if (content?.turnComplete) {
+                  sendJson({ type: 'turn_complete' });
+                }
+              },
+              onerror: (err: unknown) => {
+                if (!sessionReady) return;
+                sendJson({
+                  type: 'error',
+                  message: sanitizeAiErrorMessage(err, 'Live voice session encountered an error.'),
+                });
+              },
+              onclose: () => {
+                if (!sessionReady) return;
+                sendJson({ type: 'closed' });
+                cleanup();
+                if (clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.close();
+                }
+              },
             },
-            onerror: (err: unknown) => {
-              sendJson({
-                type: 'error',
-                message: sanitizeAiErrorMessage(err, 'Live voice session encountered an error.'),
-              });
-            },
-            onclose: () => {
-              sendJson({ type: 'closed' });
-              cleanup();
-              if (clientWs.readyState === WebSocket.OPEN) {
-                clientWs.close();
-              }
-            },
-          },
-        });
+          });
+
+          if (clientWs.readyState !== WebSocket.OPEN) {
+            cleanup();
+            return;
+          }
+          sessionReady = true;
+          sendJson({ type: 'ready', model: liveModel });
         } catch (err: unknown) {
           sendJson({
             type: 'error',

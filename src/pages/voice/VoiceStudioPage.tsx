@@ -116,6 +116,8 @@ export function VoiceStudioPage() {
   const [statusInfo, setStatusInfo] = useState<{
     geminiConfigured: boolean;
     provider: string;
+    capabilities?: Record<string, boolean>;
+    models?: Record<string, string | null>;
   } | null>(null);
 
   // Offline listening & local recordings state
@@ -172,6 +174,9 @@ export function VoiceStudioPage() {
   const liveMicCtxRef = useRef<AudioContext | null>(null);
   const liveOutCtxRef = useRef<AudioContext | null>(null);
   const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const liveProcRef = useRef<ScriptProcessorNode | null>(null);
+  const activeAudioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const nextPlayTimeRef = useRef<number>(0);
 
   const loadOfflineAssets = async () => {
@@ -204,7 +209,12 @@ export function VoiceStudioPage() {
   useEffect(() => {
     void loadOfflineAssets();
     if (isOnline) {
-      apiFetch<{ geminiConfigured: boolean; provider: string }>('/api/voice/status')
+      apiFetch<{
+        geminiConfigured: boolean;
+        provider: string;
+        capabilities?: Record<string, boolean>;
+        models?: Record<string, string | null>;
+      }>('/api/voice/status')
         .then(setStatusInfo)
         .catch(() => {});
       void loadHistory();
@@ -439,15 +449,33 @@ export function VoiceStudioPage() {
   };
 
   // --- Live AI Conversations ---
+  const clearPlaybackQueue = () => {
+    activeAudioSourcesRef.current.forEach((src) => {
+      try {
+        src.stop();
+        src.disconnect();
+      } catch {
+        // ignore already stopped sources
+      }
+    });
+    activeAudioSourcesRef.current.clear();
+    nextPlayTimeRef.current = liveOutCtxRef.current ? liveOutCtxRef.current.currentTime : 0;
+  };
+
   const play24kPcmChunk = (base64: string) => {
     if (!liveOutCtxRef.current) {
       liveOutCtxRef.current = new AudioContext({ sampleRate: 24000 });
     }
     const ctx = liveOutCtxRef.current;
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
     const raw = atob(base64);
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    const int16 = new Int16Array(bytes.buffer);
+    const sampleCount = Math.floor(bytes.byteLength / 2);
+    if (sampleCount === 0) return;
+    const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, sampleCount);
     const float32 = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
 
@@ -456,6 +484,10 @@ export function VoiceStudioPage() {
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    activeAudioSourcesRef.current.add(source);
+    source.onended = () => {
+      activeAudioSourcesRef.current.delete(source);
+    };
 
     const startTime = Math.max(ctx.currentTime, nextPlayTimeRef.current);
     source.start(startTime);
@@ -463,9 +495,30 @@ export function VoiceStudioPage() {
   };
 
   const stopLiveConversation = () => {
+    clearPlaybackQueue();
     if (wsRef.current) {
-      wsRef.current.close();
+      const ws = wsRef.current;
       wsRef.current = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    }
+    if (liveProcRef.current) {
+      try {
+        liveProcRef.current.disconnect();
+        liveProcRef.current.onaudioprocess = null;
+      } catch {
+        // ignore
+      }
+      liveProcRef.current = null;
+    }
+    if (liveSourceRef.current) {
+      try {
+        liveSourceRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      liveSourceRef.current = null;
     }
     if (liveStreamRef.current) {
       liveStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -483,9 +536,21 @@ export function VoiceStudioPage() {
   };
 
   const startLiveConversation = async () => {
+    stopLiveConversation();
     setLiveStatusMsg(null);
     setSessionSummary(null);
     setLiveState('connecting');
+
+    // Initialize/resume playback context inside user click gesture so autoplay policy permits 24kHz audio
+    try {
+      const outCtx = new AudioContext({ sampleRate: 24000 });
+      liveOutCtxRef.current = outCtx;
+      if (outCtx.state === 'suspended') {
+        await outCtx.resume();
+      }
+    } catch {
+      // Will retry lazily if AudioContext init is deferred
+    }
 
     let ticketRes: { ticket: string };
     try {
@@ -498,6 +563,7 @@ export function VoiceStudioPage() {
         }),
       });
     } catch (err: any) {
+      stopLiveConversation();
       const message = err?.message || 'Unable to start Live Voice session.';
       const lower = message.toLowerCase();
       if (lower.includes('authentication') || lower.includes('session')) {
@@ -520,14 +586,27 @@ export function VoiceStudioPage() {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'ready') {
         setLiveState('connected');
-        setLiveStatusMsg('Connected to Gemini Live voice stream.');
+        setLiveStatusMsg(
+          msg.model
+            ? `Connected to Gemini Live voice stream (${msg.model}).`
+            : 'Connected to Gemini Live voice stream.'
+        );
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
           liveStreamRef.current = stream;
           const inCtx = new AudioContext({ sampleRate: 16000 });
+          if (inCtx.state === 'suspended') {
+            await inCtx.resume();
+          }
           liveMicCtxRef.current = inCtx;
           const src = inCtx.createMediaStreamSource(stream);
           const proc = inCtx.createScriptProcessor(4096, 1, 1);
+          liveSourceRef.current = src;
+          liveProcRef.current = proc;
           src.connect(proc);
           proc.connect(inCtx.destination);
           proc.onaudioprocess = (e) => {
@@ -541,6 +620,8 @@ export function VoiceStudioPage() {
         }
       } else if (msg.type === 'audio' && msg.audio) {
         play24kPcmChunk(msg.audio);
+      } else if (msg.type === 'interrupted') {
+        clearPlaybackQueue();
       } else if (msg.type === 'input_transcript' && msg.text) {
         setTranscriptList((prev) => [
           ...prev,
@@ -559,6 +640,10 @@ export function VoiceStudioPage() {
         setLiveState('restricted');
         setLiveStatusMsg(msg.message);
         stopLiveConversation();
+      } else if (msg.type === 'closed') {
+        if (msg.message) setLiveStatusMsg(msg.message);
+        setLiveState('idle');
+        stopLiveConversation();
       } else if (msg.type === 'error') {
         setLiveStatusMsg(msg.message);
         setLiveState('demo_mode');
@@ -570,6 +655,13 @@ export function VoiceStudioPage() {
       setLiveState('demo_mode');
       setLiveStatusMsg('Unable to open Live WebSocket; switched to clearly labelled Demo Mode.');
       stopLiveConversation();
+    };
+
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        stopLiveConversation();
+        setLiveState((prev) => (prev === 'connected' || prev === 'connecting' ? 'idle' : prev));
+      }
     };
   };
 
@@ -1292,13 +1384,15 @@ export function VoiceStudioPage() {
                   </p>
                   <p className="text-xs text-[#4A5851]">
                     {liveState === 'connected'
-                      ? 'Live Gemini Audio Active'
+                      ? `Live Gemini Audio Active (${statusInfo?.models?.live || 'gemini-3.8-live'})`
                       : liveState === 'connecting'
                       ? 'Connecting...'
                       : liveState === 'demo_mode'
                       ? 'Demo Mode (Local Speech)'
                       : liveState === 'restricted'
                       ? 'Child Safety Restriction'
+                      : statusInfo?.models?.live
+                      ? `Model: ${statusInfo.models.live}`
                       : 'Ready to converse'}
                   </p>
                 </div>
