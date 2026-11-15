@@ -8,6 +8,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { buildOfflineScopeKey, listOfflineCourses } from '../../lib/offlineDb';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { MotionCard, PageTransition } from '../../components/motion/SautiMotion';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { LevelBadge } from '../../components/ui/LevelBadge';
 
 export function CoursesLibraryPage() {
   const { user, learnerProfile, activeChildId } = useAuthStore();
@@ -67,15 +69,12 @@ export function CoursesLibraryPage() {
 
   return (
     <PageTransition className="space-y-8">
-      <div>
-        <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
-          Learning Library {showingOfflineOnly ? '· Offline Downloaded Courses' : ''}
-        </p>
-        <h1 className="font-display text-3xl font-bold">Explore Courses &amp; Pathways</h1>
-        <p className="text-sm text-[#4A5851] mt-1">
-          Filter across age environments, CEFR levels (A1–C2), skills, and session length.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow={`Learning library${showingOfflineOnly ? ' · Offline downloaded courses' : ''}`}
+        title="Explore courses & pathways"
+        subtitle="Filter across age environments, CEFR levels (A1–C2), skills, and session length."
+        meta={loading ? undefined : [`${courses.length} course${courses.length === 1 ? '' : 's'}`]}
+      />
 
       {/* Filter Bar */}
       <div className="rounded-2xl sauti-surface p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -83,7 +82,7 @@ export function CoursesLibraryPage() {
           aria-label="Filter by age environment"
           value={envFilter}
           onChange={(e) => setEnvFilter(e.target.value)}
-          className="rounded-xl border border-[#245C45]/20 px-3 py-2.5 text-sm bg-[#FFF8ED]/40"
+          className="rounded-xl border border-[#245C45]/20 px-3 py-3 text-sm bg-[#FFF8ED]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#245C45]/50"
         >
           <option value="all">All Age Environments</option>
           {ENVIRONMENTS.map((env) => (
@@ -97,7 +96,7 @@ export function CoursesLibraryPage() {
           aria-label="Filter by CEFR level"
           value={levelFilter}
           onChange={(e) => setLevelFilter(e.target.value)}
-          className="rounded-xl border border-[#245C45]/20 px-3 py-2.5 text-sm bg-[#FFF8ED]/40"
+          className="rounded-xl border border-[#245C45]/20 px-3 py-3 text-sm bg-[#FFF8ED]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#245C45]/50"
         >
           <option value="all">All CEFR Levels</option>
           {['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map((lvl) => (
@@ -111,7 +110,7 @@ export function CoursesLibraryPage() {
           aria-label="Filter by skill focus"
           value={skillFilter}
           onChange={(e) => setSkillFilter(e.target.value)}
-          className="rounded-xl border border-[#245C45]/20 px-3 py-2.5 text-sm bg-[#FFF8ED]/40"
+          className="rounded-xl border border-[#245C45]/20 px-3 py-3 text-sm bg-[#FFF8ED]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#245C45]/50"
         >
           <option value="all">All Skills</option>
           <option value="Speaking">Speaking</option>
@@ -123,7 +122,7 @@ export function CoursesLibraryPage() {
           aria-label="Filter by duration"
           value={maxDuration}
           onChange={(e) => setMaxDuration(e.target.value)}
-          className="rounded-xl border border-[#245C45]/20 px-3 py-2.5 text-sm bg-[#FFF8ED]/40"
+          className="rounded-xl border border-[#245C45]/20 px-3 py-3 text-sm bg-[#FFF8ED]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#245C45]/50"
         >
           <option value="all">Any Duration</option>
           <option value="25">Up to 25 minutes</option>
@@ -167,8 +166,11 @@ export function CoursesLibraryPage() {
               >
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-xs font-mono text-[#4A5851]">
-                      {course.programme?.title} · {course.cefrLevel} · {course.topic}
+                    <p className="flex items-center gap-2 text-xs font-mono text-[#4A5851]">
+                      <LevelBadge level={course.cefrLevel} />
+                      <span>
+                        {course.skillFocus} · {course.topic}
+                      </span>
                     </p>
                     {offlineCourseIds.has(course.id) && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#245C45] shrink-0">

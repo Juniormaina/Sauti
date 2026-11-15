@@ -4,6 +4,7 @@ import { BarChart3, BookOpen, LayoutDashboard, Plus, Users } from 'lucide-react'
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
 import { MotionCard, PageTransition } from '../../components/motion/SautiMotion';
+import { PageHeader } from '../../components/ui/PageHeader';
 
 const TEACHER_NAV = [
   { to: '/teacher/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -116,12 +117,15 @@ export function TeacherPortalPage() {
           </div>
         ) : (
           <>
-            <div>
-              <h1 className="font-display text-3xl font-bold">Teacher &amp; School Dashboard</h1>
-              <p className="text-sm text-[#4A5851]">
-                Organise speaking cohorts, assign pathways, and follow class progress.
-              </p>
-            </div>
+            <PageHeader
+              eyebrow="Teacher & school"
+              title="Classrooms & cohorts"
+              subtitle="Organise speaking cohorts, assign pathways, and follow class progress."
+              meta={[
+                `${(data?.classrooms || []).length} classroom${(data?.classrooms || []).length === 1 ? '' : 's'}`,
+                `${(data?.classrooms || []).reduce((n: number, c: any) => n + (c.learnerCount || 0), 0)} learners`,
+              ]}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {(data?.classrooms || []).map((cls) => (
@@ -130,7 +134,9 @@ export function TeacherPortalPage() {
                     to={`/teacher/classrooms/${cls.id}`}
                     className="h-full rounded-2xl sauti-surface p-6 hover:border-[#245C45] transition-colors space-y-2 block"
                   >
-                    <p className="text-xs font-mono text-[#245C45]">Code: {cls.joinCode}</p>
+                    <p className="inline-block rounded-md bg-[#245C45]/10 px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-[#245C45]">
+                      {cls.joinCode}
+                    </p>
                     <h2 className="font-display text-xl font-bold">{cls.name}</h2>
                     <p className="text-xs text-[#4A5851] tabular-nums">
                       {cls.learnerCount} learners · CEFR {cls.cefrLevel}
