@@ -48,6 +48,24 @@ function Walker({ dir, onDone }: { dir: 1 | -1; onDone: () => void }) {
   );
 }
 
+/** Three soft puffs kicked up at the feet on landing. */
+function DustPuff() {
+  return (
+    <>
+      {[-1, 0, 1].map((n) => (
+        <motion.span
+          key={n}
+          initial={{ opacity: 0.55, scale: 0.4, x: 0, y: 0 }}
+          animate={{ opacity: 0, scale: 1.5, x: n * 34, y: -10 - Math.abs(n) * -4 }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+          className="absolute rounded-full bg-[#D9CDB6]"
+          style={{ left: SIZE / 2 - 9, bottom: 0, width: 18, height: 18 }}
+        />
+      ))}
+    </>
+  );
+}
+
 /**
  * Mascot B drops in from above at the tap point, lands on its back, laughs,
  * gets back up and walks off towards the nearest edge.
@@ -57,6 +75,7 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
   const [pose, setPose] = useState<MascotPose>('fall');
   const [facing, setFacing] = useState<1 | -1>(1);
   const [laughing, setLaughing] = useState(false);
+  const [dust, setDust] = useState(0);
 
   const vw = typeof window === 'undefined' ? 1024 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 768 : window.innerHeight;
@@ -76,15 +95,20 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
     };
 
     (async () => {
-      // 1. Fall from above the viewport.
+      // 1. Fall from above the viewport, stretching as it speeds up.
+      run({ scaleY: [1, 1.14], scaleX: [1, 0.92] }, { duration: 0.7, ease: 'easeIn' });
       await run({ y: [-SIZE * 1.6, groundY] }, { duration: 0.7, ease: [0.55, 0, 1, 0.45] });
       if (cancelled) return;
 
-      // 2. Land on its back with a small squash.
+      // 2. Land on its back: heavy squash, a small rebound, then settle. Dust puffs out.
       setPose('lying');
-      await run({ scaleY: [1, 0.84, 1] }, { duration: 0.24, ease: 'easeOut' });
+      setDust((d) => d + 1);
+      await run(
+        { scaleY: [1.14, 0.72, 1.06, 0.96, 1], scaleX: [0.92, 1.22, 0.97, 1.02, 1] },
+        { duration: 0.5, ease: 'easeOut', times: [0, 0.22, 0.5, 0.75, 1] }
+      );
       if (cancelled) return;
-      await wait(260);
+      await wait(220);
       if (cancelled) return;
 
       // 3. Laugh.
@@ -94,13 +118,19 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
       if (cancelled) return;
       setLaughing(false);
 
-      // 4. Get up with a little hop.
+      // 4. Get up: crouch to wind up, spring into a hop, land with a little squash.
       setPose('idle');
       await wait(380);
       if (cancelled) return;
-      await run({ y: [groundY, groundY - 20, groundY] }, { duration: 0.34, ease: 'easeOut' });
+      await run({ scaleY: [1, 0.88], scaleX: [1, 1.08] }, { duration: 0.16, ease: 'easeOut' });
       if (cancelled) return;
-      await wait(200);
+      await run(
+        { y: [groundY, groundY - 30, groundY], scaleY: [0.88, 1.1, 0.9, 1], scaleX: [1.08, 0.94, 1.08, 1] },
+        { duration: 0.42, ease: 'easeOut', times: [0, 0.5, 0.85, 1] }
+      );
+      if (cancelled) return;
+      setDust((d) => d + 1);
+      await wait(180);
       if (cancelled) return;
 
       // 5. Walk away towards the nearer edge.
@@ -131,6 +161,7 @@ function Faller({ x, onDone }: { x: number; onDone: () => void }) {
       }}
     >
       <ZuriMascot pose={pose} facing={facing} size={SIZE} />
+      {dust > 0 && <DustPuff key={dust} />}
       <AnimatePresence>
         {laughing && (
           <motion.span
