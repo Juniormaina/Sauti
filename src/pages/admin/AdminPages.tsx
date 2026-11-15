@@ -3,6 +3,7 @@ import { BookOpen, Layers, LayoutDashboard, ListChecks, Settings, Users } from '
 import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
 import { PageTransition } from '../../components/motion/SautiMotion';
+import { PageHeader } from '../../components/ui/PageHeader';
 
 const ADMIN_NAV = [
   { to: '/admin/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -44,12 +45,11 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
   return (
     <PortalLayout title="SAUTI Admin" subtitle="Curriculum & Governance" navItems={ADMIN_NAV}>
       <PageTransition className="space-y-8">
-        <div>
-          <h1 className="font-display text-3xl font-bold capitalize">Admin · {section}</h1>
-          <p className="text-sm text-[#4A5851]">
-            Protected administration workspace for SAUTI programmes, courses, and users.
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="Administration"
+          title={section === 'dashboard' ? 'Overview' : section.charAt(0).toUpperCase() + section.slice(1)}
+          subtitle="Protected administration workspace for SAUTI programmes, courses, and users."
+        />
 
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
@@ -60,8 +60,8 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
               { label: 'Completions', value: stats.completions },
               { label: 'Voice Sessions', value: stats.voiceSessions },
             ].map((s) => (
-              <div key={s.label} className="rounded-2xl sauti-surface p-4">
-                <p className="text-xs text-[#4A5851]">{s.label}</p>
+              <div key={s.label} className="rounded-2xl sauti-surface border-l-4 border-l-[#245C45] p-4">
+                <p className="font-mono text-[11px] font-semibold text-[#245C45]">{s.label}</p>
                 <p className="font-display text-2xl font-bold tabular-nums mt-1">{s.value}</p>
               </div>
             ))}
@@ -70,7 +70,7 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
 
         {section === 'users' ? (
           <div className="rounded-2xl bg-white border border-[#245C45]/12 p-6 overflow-x-auto">
-            <table className="w-full text-sm text-left">
+            <table className="w-full text-sm text-left"><caption className="sr-only">SAUTI users</caption>
               <thead>
                 <tr className="border-b border-[#245C45]/12 text-xs text-[#4A5851]">
                   <th className="py-2 pr-4">Name</th>
@@ -84,7 +84,11 @@ export function AdminPortalPage({ section = 'dashboard' }: { section?: string })
                   <tr key={u.id} className="border-b border-[#245C45]/8 last:border-0">
                     <td className="py-2.5 pr-4 font-semibold">{u.displayName}</td>
                     <td className="py-2.5 pr-4">{u.email}</td>
-                    <td className="py-2.5 pr-4 font-mono text-xs">{u.role}</td>
+                    <td className="py-2.5 pr-4">
+                      <span className="rounded-md bg-[#245C45]/10 px-2 py-0.5 font-mono text-[11px] font-bold text-[#245C45]">
+                        {u.role}
+                      </span>
+                    </td>
                     <td className="py-2.5">{u.accountType}</td>
                   </tr>
                 ))}

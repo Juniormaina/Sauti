@@ -11,6 +11,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { apiFetch, isOfflineOrNetworkError } from '../../services/api';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { Activity, Course, Lesson, Module } from '../../types/sauti';
 import { useSpeechPlayback } from '../../hooks/useSpeechPlayback';
 import { ActivityRunner } from '../../components/learning/ActivityRunner';
@@ -229,24 +230,27 @@ export function LessonDetailPage() {
   return (
     <PageTransition className="space-y-8">
       {/* Lesson Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          {course && (
+      <PageHeader
+        back={
+          course ? (
             <Link
               to={`/learn/courses/${course.id}`}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C45] mb-3 hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C45] hover:underline"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Back to {course.title}
             </Link>
-          )}
-          <p className="text-xs text-[#4A5851] mb-1">
-            CEFR {lesson.cefrLevel} · {lesson.skillType} · {lesson.durationMinutes} min
-            {loadedFromCache ? ' · Loaded from offline storage' : ''}
-          </p>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold mb-2">{lesson.title}</h1>
-          <p className="text-base text-[#245C45] font-medium">Objective: {lesson.objective}</p>
-        </div>
-
+          ) : undefined
+        }
+        eyebrow={`Lesson${moduleData?.title ? ` · ${moduleData.title}` : ''}`}
+        title={lesson.title}
+        subtitle={<span className="font-medium text-[#245C45]">Objective: {lesson.objective}</span>}
+        meta={[
+          `CEFR ${lesson.cefrLevel}`,
+          lesson.skillType,
+          `${lesson.durationMinutes} min`,
+          ...(loadedFromCache ? ['Loaded from offline storage'] : []),
+        ]}
+        actions={
         <button
           type="button"
           onClick={() => void handleToggleDownload()}
@@ -268,7 +272,8 @@ export function LessonDetailPage() {
             </>
           )}
         </button>
-      </div>
+        }
+      />
 
       {/* Introduction & Audio Story */}
       <section className="rounded-3xl sauti-surface p-6 sm:p-8 space-y-5">

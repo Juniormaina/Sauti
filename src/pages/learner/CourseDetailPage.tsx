@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Clock, Download, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Download, Trash2 } from 'lucide-react';
 import { apiFetch, isOfflineOrNetworkError } from '../../services/api';
 import { Course, ModuleWithLessons, Programme } from '../../types/sauti';
 import { useAuthStore } from '../../stores/authStore';
@@ -15,6 +15,8 @@ import {
 } from '../../lib/offlineDb';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { PageTransition } from '../../components/motion/SautiMotion';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { LevelBadge } from '../../components/ui/LevelBadge';
 
 export function CourseDetailPage() {
   const { id } = useParams();
@@ -130,24 +132,30 @@ export function CourseDetailPage() {
     );
   }
 
+  const totalLessons = data.modules.reduce((n, m) => n + m.lessons.length, 0);
+
   return (
     <PageTransition className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
+      <PageHeader
+        back={
           <Link
             to="/learn/courses"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C45] mb-3 hover:underline"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C45] hover:underline"
           >
             <ArrowLeft className="w-3.5 h-3.5" /> Back to courses
           </Link>
-          <p className="text-xs text-[#4A5851] mb-1">
-            {data.programme?.title} · CEFR {data.course.cefrLevel} · {data.course.skillFocus}
-          </p>
-          <h1 className="font-display text-3xl font-bold mb-2">{data.course.title}</h1>
-          <p className="text-base text-[#4A5851] max-w-3xl">{data.course.description}</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        }
+        eyebrow={`${data.programme?.title ?? 'Course'} · ${data.course.skillFocus}`}
+        title={data.course.title}
+        subtitle={data.course.description}
+        meta={[
+          `CEFR ${data.course.cefrLevel}`,
+          `${data.modules.length} module${data.modules.length === 1 ? '' : 's'}`,
+          `${totalLessons} lesson${totalLessons === 1 ? '' : 's'}`,
+          `${data.course.estimatedMinutes} min`,
+        ]}
+        actions={
+          <>
           {isOnline && (
             <button
               type="button"
@@ -175,8 +183,9 @@ export function CourseDetailPage() {
               <span>Remove offline</span>
             </button>
           )}
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {downloadMsg && (
         <div className="rounded-xl bg-[#FDF3E3] border border-[#245C45]/15 px-4 py-3 text-xs text-[#17201C]">
@@ -205,14 +214,16 @@ export function CourseDetailPage() {
             </div>
 
             <div className="divide-y divide-[#245C45]/10">
-              {mod.lessons.map((lesson) => (
+              {mod.lessons.map((lesson, lessonIdx) => (
                 <Link
                   key={lesson.id}
                   to={`/learn/lessons/${lesson.id}`}
                   className="py-4 flex items-center justify-between gap-4 hover:bg-[#FFF8ED]/60 px-3 -mx-3 rounded-xl transition-colors"
                 >
-                  <div className="flex items-start gap-3">
-                    <BookOpen className="w-5 h-5 text-[#245C45] mt-0.5 shrink-0" />
+                  <div className="flex items-start gap-4">
+                    <span className="mt-0.5 w-9 shrink-0 font-mono text-xs font-semibold text-[#245C45]">
+                      {idx + 1}.{lessonIdx + 1}
+                    </span>
                     <div>
                       <p className="font-display font-bold text-base">{lesson.title}</p>
                       <p className="text-xs text-[#4A5851]">{lesson.objective}</p>
@@ -224,6 +235,12 @@ export function CourseDetailPage() {
                         <CheckCircle2 className="w-3.5 h-3.5" /> Offline
                       </span>
                     )}
+                    {lesson.completed && (
+                      <span className="inline-flex items-center gap-1 text-[#245C45]">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                      </span>
+                    )}
+                    <LevelBadge level={lesson.cefrLevel} />
                     <span className="inline-flex items-center gap-1 tabular-nums text-[#4A5851]">
                       <Clock className="w-3.5 h-3.5" /> {lesson.durationMinutes}m
                     </span>

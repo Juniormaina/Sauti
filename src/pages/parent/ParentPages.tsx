@@ -15,6 +15,7 @@ import { PortalLayout } from '../../app/layouts/PortalLayout';
 import { apiFetch } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { PageTransition } from '../../components/motion/SautiMotion';
+import { PageHeader } from '../../components/ui/PageHeader';
 
 const PARENT_NAV = [
   { to: '/parent/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -317,14 +318,15 @@ export function ParentDashboardPage({
           </div>
         ) : (
           <>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h1 className="font-display text-3xl font-bold">Family Learning Overview</h1>
-                <p className="text-sm text-[#4A5851]">
-                  Calm visibility into your children&apos;s English progress without surveillance.
-                </p>
-              </div>
-            </div>
+            <PageHeader
+              eyebrow="Parent portal"
+              title="Family learning overview"
+              subtitle="Calm visibility into your children's English progress without surveillance."
+              meta={[
+                `${(data?.children || []).length} child profile${(data?.children || []).length === 1 ? '' : 's'}`,
+                hasActiveConsent ? 'Guardian consent active' : 'Consent needed',
+              ]}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {(data?.children || []).map((child) => (
@@ -333,9 +335,17 @@ export function ParentDashboardPage({
                   className="rounded-2xl sauti-surface p-6 flex flex-col justify-between space-y-4"
                 >
                   <div>
-                    <p className="text-xs text-[#4A5851] mb-1">
-                      Ages {child.ageRange} · Level {child.cefrLevel}
-                    </p>
+                    <div className="mb-3 flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-11 w-11 items-center justify-center rounded-full bg-[#245C45] font-display text-lg font-bold text-[#FFF8ED]"
+                      >
+                        {String(child.displayName || '?').charAt(0).toUpperCase()}
+                      </span>
+                      <p className="font-mono text-xs font-semibold text-[#245C45]">
+                        Ages {child.ageRange} · Level {child.cefrLevel}
+                      </p>
+                    </div>
                     <h2 className="font-display text-xl font-bold">{child.displayName}</h2>
                     <p className="text-sm text-[#4A5851] mt-2 tabular-nums">
                       {child.completedLessonsCount} lessons · {child.xp} stars · {child.streakDays}d streak
@@ -345,7 +355,7 @@ export function ParentDashboardPage({
                     <button
                       type="button"
                       onClick={() => launchChildWorkspace(child)}
-                      className="flex-1 py-2.5 rounded-xl bg-[#245C45] text-[#FFF8ED] text-xs font-semibold"
+                      className="flex-1 py-3 rounded-xl bg-[#245C45] text-[#FFF8ED] text-xs font-semibold hover:bg-[#194231] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#245C45]/50"
                     >
                       Launch learning
                     </button>
