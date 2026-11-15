@@ -1,8 +1,7 @@
 import { ReactNode } from 'react';
 import { motion, useReducedMotion, type Variants } from 'motion/react';
 import { Volume2 } from 'lucide-react';
-import { ResilientImage } from '../ui/ResilientImage';
-import { SAUTI_IMAGES } from '../../utils/environments';
+import { ZuriMascot } from '../mascot/ZuriMascot';
 
 /**
  * Centralized SAUTI motion language tokens.
@@ -52,20 +51,8 @@ interface PageTransitionProps {
 }
 
 export function PageTransition({ children, className = '' }: PageTransitionProps) {
-  const reduced = useReducedMotion();
-  if (reduced) {
-    return <div className={className}>{children}</div>;
-  }
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: SAUTI_DURATIONS.base, ease: SAUTI_EASE }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  );
+  // Route-level enter/exit is handled once by <AnimatedRoutes /> in App.tsx.
+  return <div className={className}>{children}</div>;
 }
 
 interface RevealSectionProps {
@@ -308,12 +295,13 @@ export function ZuriCompanionCard({
       }`}
     >
       <div className={`${compact ? 'w-14 h-14' : 'w-16 h-16 sm:w-20 sm:h-20'} rounded-2xl overflow-hidden shrink-0 border ${dark ? 'border-white/20' : 'border-[#245C45]/15'} bg-[#FDF3E3]`}>
-        <ResilientImage
-          src={SAUTI_IMAGES.voiceCompanion}
-          alt="Zuri, the SAUTI voice companion emblem"
-          className="w-full h-full object-cover"
-          fallbackTitle="Zuri"
-        />
+        <div
+          role="img"
+          aria-label="Zuri, the SAUTI voice companion"
+          className="flex h-full w-full items-center justify-center"
+        >
+          <ZuriMascot headOnly size={compact ? 46 : 62} />
+        </div>
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 mb-1">

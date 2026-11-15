@@ -3,6 +3,7 @@ import { ArrowRight, Building2, GraduationCap, ShieldCheck, User } from 'lucide-
 import { PublicHeader } from '../../components/navigation/PublicHeader';
 import { ResilientImage } from '../../components/ui/ResilientImage';
 import { ENVIRONMENTS } from '../../utils/environments';
+import { photo } from '../../utils/photos';
 import {
   MotionCard,
   PageTransition,
@@ -132,8 +133,10 @@ export function GetStartedPage() {
                         style={{ backgroundColor: env.surfaceHex }}
                       >
                         <ResilientImage
-                          src={env.image}
-                          alt={env.title}
+                          src={photo(env.photoKey).src}
+                          srcSet={photo(env.photoKey).srcSet}
+                          sizes="(min-width: 1024px) 30vw, (min-width: 768px) 45vw, 100vw"
+                          alt={`${env.title}, ages ${env.ageRange}`}
                           className="w-full h-full object-cover"
                         />
                       </div>
@@ -174,6 +177,34 @@ export function GetStartedPage() {
               );
             })}
           </RevealStagger>
+
+          {/* Free validation pilot (moved here from the home page) */}
+          <section
+            aria-labelledby="pilot-heading"
+            className="mt-20 rounded-3xl bg-[#245C45] bg-editorial-dots-dark px-6 py-10 text-[#FFF8ED] sm:px-10"
+          >
+            <p className="mb-2 font-mono text-xs font-semibold text-[#F6C96B]">Validation pilot</p>
+            <h2 id="pilot-heading" className="mb-3 font-display text-3xl font-bold">
+              Free while we learn from you.
+            </h2>
+            <p className="mb-6 max-w-2xl leading-relaxed text-[#FFF8ED]/85">
+              No subscription and no payment details are required during the pilot. Learners,
+              parents and teachers get free access to starter courses and Voice Studio in exchange
+              for honest feedback on clarity, child safety and pace.
+            </p>
+            <ul className="grid gap-3 text-sm sm:grid-cols-3">
+              <li className="rounded-2xl border border-white/15 bg-[#194231] p-4">
+                Child accounts need a parent or guardian, with explicit consent you can revoke at
+                any time.
+              </li>
+              <li className="rounded-2xl border border-white/15 bg-[#194231] p-4">
+                Voice recordings are processed transiently and never stored as raw audio files.
+              </li>
+              <li className="rounded-2xl border border-white/15 bg-[#194231] p-4">
+                Lessons work offline, with a data-saving mode for low-bandwidth connections.
+              </li>
+            </ul>
+          </section>
         </main>
       </PageTransition>
     </div>

@@ -1,6 +1,6 @@
 import { ReactNode, useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { MotionConfig } from 'motion/react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { firebaseAuth } from './lib/firebase';
 import { apiFetch } from './services/api';
@@ -12,6 +12,8 @@ import {
 import { useOfflineStore } from './stores/offlineStore';
 import { buildOfflineScopeKey } from './lib/offlineDb';
 import { UserRole } from './types/sauti';
+import { SAUTI_EASE } from './components/motion/SautiMotion';
+import { MascotStage } from './components/mascot/MascotStage';
 
 import { HomePage } from './pages/marketing/HomePage';
 import { GetStartedPage } from './pages/marketing/GetStartedPage';
@@ -71,6 +73,87 @@ function LearnerRoute({ children }: { children: ReactNode }) {
       <LearnerLayoutSwitch>{children}</LearnerLayoutSwitch>
     </RequireAuth>
   );
+}
+
+/** Routes with one shared enter/exit transition (disabled for reduced motion by <MotionConfig />). */
+function AnimatedRoutes() {
+  const location = useLocation();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.22, ease: SAUTI_EASE }}
+      >
+        <Routes location={location}>
+          {/* Public Marketing Website */}
+          <Route path="/" element={<HomePage />} />
+          <Route path="/get-started" element={<GetStartedPage />} />
+
+          {/* Authentication & Onboarding */}
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/onboarding" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
+          <Route path="/onboarding/profile" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
+          <Route path="/onboarding/assessment" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
+          <Route path="/onboarding/goals" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
+
+          {/* Learner Routes (age-tailored via LearnerLayoutSwitch) */}
+          <Route path="/learn/dashboard" element={<LearnerRoute><LearnerDashboardPage /></LearnerRoute>} />
+          <Route path="/learn/courses" element={<LearnerRoute><CoursesLibraryPage /></LearnerRoute>} />
+          <Route path="/learn/courses/:id" element={<LearnerRoute><CourseDetailPage /></LearnerRoute>} />
+          <Route path="/learn/modules/:id" element={<LearnerRoute><ModuleDetailPage /></LearnerRoute>} />
+          <Route path="/learn/lessons/:id" element={<LearnerRoute><LessonDetailPage /></LearnerRoute>} />
+          <Route path="/learn/speaking" element={<LearnerRoute><VoiceStudioPage /></LearnerRoute>} />
+          <Route path="/learn/listening" element={<LearnerRoute><SkillHubPage skill="Listening" /></LearnerRoute>} />
+          <Route path="/learn/reading" element={<LearnerRoute><SkillHubPage skill="Reading" /></LearnerRoute>} />
+          <Route path="/learn/writing" element={<LearnerRoute><SkillHubPage skill="Writing" /></LearnerRoute>} />
+          <Route path="/learn/vocabulary" element={<LearnerRoute><SkillHubPage skill="Vocabulary" /></LearnerRoute>} />
+          <Route path="/learn/grammar" element={<LearnerRoute><SkillHubPage skill="Grammar" /></LearnerRoute>} />
+          <Route path="/learn/challenges" element={<LearnerRoute><SkillHubPage skill="Challenges" /></LearnerRoute>} />
+          <Route path="/learn/achievements" element={<LearnerRoute><LearnerAchievementsPage /></LearnerRoute>} />
+          <Route path="/learn/progress" element={<LearnerRoute><LearnerProgressPage /></LearnerRoute>} />
+          <Route path="/learn/history" element={<LearnerRoute><LearnerHistoryPage /></LearnerRoute>} />
+          <Route path="/learn/profile" element={<LearnerRoute><LearnerProfileSettingsPage /></LearnerRoute>} />
+          <Route path="/learn/settings" element={<LearnerRoute><LearnerProfileSettingsPage /></LearnerRoute>} />
+
+          {/* Parent Portal */}
+          <Route path="/parent/dashboard" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="overview" /></RequireRole>} />
+          <Route path="/parent/children" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="children" /></RequireRole>} />
+          <Route path="/parent/children/:id" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="children" /></RequireRole>} />
+          <Route path="/parent/reports" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="reports" /></RequireRole>} />
+          <Route path="/parent/settings" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="settings" /></RequireRole>} />
+
+          {/* Teacher & School Portal */}
+          <Route path="/teacher/dashboard" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
+          <Route path="/teacher/classrooms" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
+          <Route path="/teacher/classrooms/:id" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
+          <Route path="/teacher/learners" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
+          <Route path="/teacher/reports" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
+
+          {/* Protected Admin Area */}
+          <Route path="/admin/dashboard" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="dashboard" /></RequireRole>} />
+          <Route path="/admin/users" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="users" /></RequireRole>} />
+          <Route path="/admin/courses" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="courses" /></RequireRole>} />
+          <Route path="/admin/modules" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="modules" /></RequireRole>} />
+          <Route path="/admin/lessons" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="lessons" /></RequireRole>} />
+          <Route path="/admin/activities" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="activities" /></RequireRole>} />
+          <Route path="/admin/settings" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="settings" /></RequireRole>} />
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+/** The touch-triggered mascot only appears on the public pages, never inside lessons. */
+function PublicMascot() {
+  const { pathname } = useLocation();
+  return pathname === '/' || pathname === '/get-started' ? <MascotStage /> : null;
 }
 
 export default function App() {
@@ -167,65 +250,9 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
       <BrowserRouter>
-        <Routes>
-        {/* Public Marketing Website */}
-        <Route path="/" element={<HomePage />} />
-        <Route path="/get-started" element={<GetStartedPage />} />
-
-        {/* Authentication & Onboarding */}
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/onboarding" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
-        <Route path="/onboarding/profile" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
-        <Route path="/onboarding/assessment" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
-        <Route path="/onboarding/goals" element={<RequireAuth><OnboardingFlow /></RequireAuth>} />
-
-        {/* Learner Routes (age-tailored via LearnerLayoutSwitch) */}
-        <Route path="/learn/dashboard" element={<LearnerRoute><LearnerDashboardPage /></LearnerRoute>} />
-        <Route path="/learn/courses" element={<LearnerRoute><CoursesLibraryPage /></LearnerRoute>} />
-        <Route path="/learn/courses/:id" element={<LearnerRoute><CourseDetailPage /></LearnerRoute>} />
-        <Route path="/learn/modules/:id" element={<LearnerRoute><ModuleDetailPage /></LearnerRoute>} />
-        <Route path="/learn/lessons/:id" element={<LearnerRoute><LessonDetailPage /></LearnerRoute>} />
-        <Route path="/learn/speaking" element={<LearnerRoute><VoiceStudioPage /></LearnerRoute>} />
-        <Route path="/learn/listening" element={<LearnerRoute><SkillHubPage skill="Listening" /></LearnerRoute>} />
-        <Route path="/learn/reading" element={<LearnerRoute><SkillHubPage skill="Reading" /></LearnerRoute>} />
-        <Route path="/learn/writing" element={<LearnerRoute><SkillHubPage skill="Writing" /></LearnerRoute>} />
-        <Route path="/learn/vocabulary" element={<LearnerRoute><SkillHubPage skill="Vocabulary" /></LearnerRoute>} />
-        <Route path="/learn/grammar" element={<LearnerRoute><SkillHubPage skill="Grammar" /></LearnerRoute>} />
-        <Route path="/learn/challenges" element={<LearnerRoute><SkillHubPage skill="Challenges" /></LearnerRoute>} />
-        <Route path="/learn/achievements" element={<LearnerRoute><LearnerAchievementsPage /></LearnerRoute>} />
-        <Route path="/learn/progress" element={<LearnerRoute><LearnerProgressPage /></LearnerRoute>} />
-        <Route path="/learn/history" element={<LearnerRoute><LearnerHistoryPage /></LearnerRoute>} />
-        <Route path="/learn/profile" element={<LearnerRoute><LearnerProfileSettingsPage /></LearnerRoute>} />
-        <Route path="/learn/settings" element={<LearnerRoute><LearnerProfileSettingsPage /></LearnerRoute>} />
-
-        {/* Parent Portal */}
-        <Route path="/parent/dashboard" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="overview" /></RequireRole>} />
-        <Route path="/parent/children" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="children" /></RequireRole>} />
-        <Route path="/parent/children/:id" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="children" /></RequireRole>} />
-        <Route path="/parent/reports" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="reports" /></RequireRole>} />
-        <Route path="/parent/settings" element={<RequireRole roles={['PARENT', 'ADMIN']}><ParentDashboardPage section="settings" /></RequireRole>} />
-
-        {/* Teacher & School Portal */}
-        <Route path="/teacher/dashboard" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
-        <Route path="/teacher/classrooms" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
-        <Route path="/teacher/classrooms/:id" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
-        <Route path="/teacher/learners" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
-        <Route path="/teacher/reports" element={<RequireRole roles={['TEACHER', 'ADMIN']}><TeacherPortalPage /></RequireRole>} />
-
-        {/* Protected Admin Area */}
-        <Route path="/admin/dashboard" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="dashboard" /></RequireRole>} />
-        <Route path="/admin/users" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="users" /></RequireRole>} />
-        <Route path="/admin/courses" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="courses" /></RequireRole>} />
-        <Route path="/admin/modules" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="modules" /></RequireRole>} />
-        <Route path="/admin/lessons" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="lessons" /></RequireRole>} />
-        <Route path="/admin/activities" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="activities" /></RequireRole>} />
-        <Route path="/admin/settings" element={<RequireRole roles={['ADMIN']}><AdminPortalPage section="settings" /></RequireRole>} />
-
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+        <AnimatedRoutes />
+        <PublicMascot />
+      </BrowserRouter>
     </MotionConfig>
   );
 }
