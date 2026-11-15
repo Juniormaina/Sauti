@@ -17,12 +17,13 @@ const MODES = ['Listen & Learn', 'Speak & Practise', 'Pronunciation Coach', 'Liv
  * Account choice, the free pilot and sign-up live on /get-started.
  */
 export function HomePage() {
-  const [active, setActive] = useState(0);
+  // null = show the shared group photo; an index = that age group's portrait.
+  const [active, setActive] = useState<number | null>(null);
   const { speak, isSpeaking, isLoading } = useSpeechPlayback();
   const reduced = useReducedMotion();
 
-  const env = ENVIRONMENTS[active];
-  const activePhoto = photo(env.photoKey);
+  const env = active === null ? null : ENVIRONMENTS[active];
+  const activePhoto = photo(env ? env.photoKey : 'hero');
 
   const handleHearSauti = () => {
     void speak(
@@ -93,7 +94,7 @@ export function HomePage() {
             <div className="relative order-first aspect-[16/10] overflow-hidden rounded-3xl border border-[#245C45]/15 bg-[#FDF3E3] lg:sticky lg:top-24 lg:order-last lg:col-span-5">
               <AnimatePresence initial={false}>
                 <motion.div
-                  key={env.id}
+                  key={env ? env.id : 'group'}
                   initial={reduced ? false : { opacity: 0, scale: 1.05 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={reduced ? undefined : { opacity: 0 }}
@@ -104,23 +105,29 @@ export function HomePage() {
                     src={activePhoto.src}
                     srcSet={activePhoto.srcSet}
                     sizes="(min-width: 1024px) 40vw, 100vw"
-                    alt={`${env.title}, ages ${env.ageRange}`}
+                    alt={
+                      env
+                        ? `${env.title}, ages ${env.ageRange}`
+                        : 'Learners of every age sharing a tablet in a park'
+                    }
                     className="h-full w-full object-cover"
                   />
                 </motion.div>
               </AnimatePresence>
               <div className="absolute bottom-3 left-3 rounded-full bg-[#FFF8ED]/92 px-3.5 py-1.5 font-mono text-xs font-semibold text-[#245C45]">
-                {env.title} · Ages {env.ageRange}
+                {env ? `${env.title} · Ages ${env.ageRange}` : 'Every age, one voice'}
               </div>
             </div>
 
-            <ol className="lg:col-span-7">
+            <ol className="lg:col-span-7" onMouseLeave={() => setActive(null)}>
               {ENVIRONMENTS.map((e, i) => (
                 <li key={e.id}>
                   <Link
                     to="/get-started"
                     onMouseEnter={() => setActive(i)}
+                    onTouchStart={() => setActive(i)}
                     onFocus={() => setActive(i)}
+                    onBlur={() => setActive(null)}
                     onClick={() => setActive(i)}
                     aria-current={i === active ? 'true' : undefined}
                     className="group grid grid-cols-[2.75rem_1fr_auto] items-center gap-4 border-t border-[#245C45]/15 py-5 transition-colors last:border-b hover:bg-[#245C45]/[0.04]"

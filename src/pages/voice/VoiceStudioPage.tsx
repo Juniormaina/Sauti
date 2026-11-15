@@ -657,7 +657,7 @@ export function VoiceStudioPage() {
   return (
     <PageTransition className="space-y-8">
       {/* Voice Studio Header */}
-      <div className="rounded-3xl sauti-surface-warm bg-editorial-dots p-6 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+      <div className="rounded-3xl sauti-surface-forest bg-editorial-dots-dark border border-[#245C45] p-6 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5 text-[#FFF8ED]">
         <div className="flex items-start sm:items-center gap-4">
           <div className="w-14 h-14 rounded-2xl overflow-hidden border border-[#245C45]/15 bg-white shrink-0 shadow-sm">
             <div
@@ -669,19 +669,19 @@ export function VoiceStudioPage() {
             </div>
           </div>
           <div>
-            <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
+            <p className="text-xs font-mono font-semibold text-[#F6C96B] mb-1">
               Voice Studio with Zuri ·{' '}
               {!isOnline
                 ? 'Offline Mode (Local Device Speech & Mic)'
                 : statusInfo?.provider || 'Checking voice configuration...'}
             </p>
-            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold text-[#17201C] leading-tight">
+            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold text-[#FFF8ED] leading-tight">
               Find your voice at your own pace
             </h1>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 p-1.5 rounded-2xl bg-[#FFF8ED] border border-[#245C45]/14 shadow-xs">
+        <div role="tablist" aria-label="Voice Studio modes" className="flex flex-wrap gap-1.5 p-1.5 rounded-2xl bg-[#194231] border border-white/15">
           {[
             { id: 'listen', label: 'Listen & Learn', icon: Headphones },
             { id: 'speak', label: 'Speak & Practise', icon: Mic },
@@ -694,16 +694,18 @@ export function VoiceStudioPage() {
               <button
                 key={tab.id}
                 type="button"
+                role="tab"
+                aria-selected={active}
                 onClick={() => setActiveTab(tab.id as StudioTab)}
                 className={`relative inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
-                  active ? 'text-[#FFF8ED]' : 'text-[#4A5851] hover:text-[#17201C]'
+                  active ? 'text-[#17201C]' : 'text-[#FFF8ED]/75 hover:text-[#FFF8ED]'
                 }`}
               >
                 {active && (
                   <motion.span
                     layoutId="voice-studio-tab"
                     transition={reduced ? { duration: 0 } : SAUTI_SPRING}
-                    className="absolute inset-0 rounded-xl bg-[#245C45] shadow-xs"
+                    className="absolute inset-0 rounded-xl bg-[#F6C96B] shadow-xs"
                   />
                 )}
                 <Icon className="w-4 h-4 relative z-10" />

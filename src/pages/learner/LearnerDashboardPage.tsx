@@ -102,6 +102,7 @@ export function LearnerDashboardPage() {
   const completionPct = data ? Math.round((completedCount / totalCount) * 100) : 0;
   const nextLesson =
     data?.recommendedLessons?.find((l) => !l.completed) || data?.recommendedLessons?.[0];
+  const upNext = (data?.recommendedLessons ?? []).filter((l) => !l.completed).slice(0, 4);
 
   return (
     <PageTransition className="space-y-8">
@@ -230,72 +231,133 @@ export function LearnerDashboardPage() {
         </section>
       )}
 
-      {/* Progress & Shortcuts Grid */}
-      <RevealStagger className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <RevealItem>
-          <div className="h-full rounded-2xl sauti-surface p-5">
-            <div className="flex items-center justify-between text-xs text-[#4A5851] mb-2">
-              <span>Learning Streak</span>
-              <Flame className="w-4 h-4 text-[#F28B75]" />
+      {/* Learning workspace: what to do next, and where you stand */}
+      <section
+        aria-label="Learning workspace"
+        className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
+      >
+        <div className="lg:col-span-8 rounded-3xl sauti-surface p-6 sm:p-7">
+          <div className="flex flex-wrap items-end justify-between gap-3 mb-5">
+            <div>
+              <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">Up next</p>
+              <h2 className="font-display text-2xl font-bold">
+                {isKids ? 'Your next adventures' : 'Your next lessons'}
+              </h2>
             </div>
-            <p className="font-display text-3xl font-bold tabular-nums">
-              {learner?.streakDays ?? 0} days
-            </p>
-            <p className="text-xs text-[#4A5851] mt-1">Earn streaks by completing lessons</p>
+            <Link
+              to="/learn/courses"
+              className="text-sm font-semibold text-[#245C45] hover:underline"
+            >
+              All courses
+            </Link>
           </div>
-        </RevealItem>
 
-        <RevealItem>
-          <div className="h-full rounded-2xl sauti-surface p-5">
-            <div className="flex items-center justify-between text-xs text-[#4A5851] mb-2">
-              <span>{isKids ? 'Star Points' : 'Learning XP'}</span>
-              <Sparkles className="w-4 h-4 text-[#F6C96B]" />
-            </div>
-            <p className="font-display text-3xl font-bold tabular-nums">{learner?.xp ?? 0}</p>
-            <p className="text-xs text-[#4A5851] mt-1">
-              Current CEFR tier: {learner?.cefrLevel || 'A1'}
+          {upNext.length === 0 ? (
+            <p className="text-sm text-[#4A5851] leading-relaxed">
+              {data
+                ? 'You are all caught up on recommended lessons. Browse the library to start a new module.'
+                : 'Lesson recommendations load when you are back online. Downloaded lessons stay available above.'}
             </p>
-          </div>
-        </RevealItem>
+          ) : (
+            <ol className="divide-y divide-[#245C45]/12">
+              {upNext.map((lesson, i) => (
+                <li key={lesson.id}>
+                  <Link
+                    to={`/learn/lessons/${lesson.id}`}
+                    className="group grid grid-cols-[2.25rem_1fr_auto] items-center gap-4 py-4 transition-colors hover:bg-[#245C45]/[0.04] -mx-3 px-3 rounded-xl"
+                  >
+                    <span
+                      className={`font-mono text-xs font-semibold ${
+                        i === 0 ? 'text-[#F28B75]' : 'text-[#245C45]'
+                      }`}
+                    >
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span>
+                      <span className="block font-display text-lg font-bold group-hover:text-[#245C45] transition-colors">
+                        {lesson.title}
+                      </span>
+                      <span className="block text-sm text-[#4A5851] line-clamp-1">
+                        {lesson.objective}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2 font-mono text-xs text-[#4A5851]">
+                      {lesson.cefrLevel} · {lesson.durationMinutes} min
+                      <ArrowRight className="w-4 h-4 text-[#245C45] transition-transform group-hover:translate-x-1" />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
 
-        <RevealItem>
-          <div className="h-full rounded-2xl sauti-surface p-5">
-            <div className="flex items-center justify-between text-xs text-[#4A5851] mb-2">
-              <span>Pathway Progress</span>
-              <Target className="w-4 h-4 text-[#245C45]" />
+        <div className="lg:col-span-4 space-y-4">
+          <div className="rounded-3xl sauti-surface p-6">
+            <div className="flex items-end justify-between mb-3">
+              <div>
+                <p className="text-xs font-mono font-semibold text-[#245C45] mb-1">
+                  Pathway progress
+                </p>
+                <p className="font-display text-4xl font-bold tabular-nums">
+                  {data ? `${completionPct}%` : 'Offline'}
+                </p>
+              </div>
+              <Target className="w-5 h-5 text-[#245C45] mb-1" aria-hidden="true" />
             </div>
-            <p className="font-display text-3xl font-bold tabular-nums mb-2.5">
-              {data ? `${completionPct}%` : 'Offline'}
-            </p>
             <AnimatedProgressBar
               value={completionPct}
               ariaLabel="Pathway completion percentage"
               trackClassName="bg-[#FDF3E3]"
               barClassName={isKids ? 'bg-[#F28B75]' : 'bg-[#245C45]'}
             />
-          </div>
-        </RevealItem>
+            <p className="text-xs text-[#4A5851] mt-2">
+              {data ? `${completedCount} of ${data.totalLessonsCount} lessons complete` : 'Progress syncs when you reconnect'}
+            </p>
 
-        <RevealItem>
-          <div className="h-full rounded-2xl sauti-surface-warm p-5 flex flex-col justify-between">
-            <p className="text-xs font-semibold text-[#4A5851]">Practice Shortcuts</p>
-            <div className="flex flex-col gap-2.5 mt-2">
+            <dl className="mt-5 grid grid-cols-3 divide-x divide-[#245C45]/12 border-t border-[#245C45]/12 pt-4 text-center">
+              <div className="px-1">
+                <dt className="flex items-center justify-center gap-1 text-[11px] text-[#4A5851]">
+                  <Flame className="w-3.5 h-3.5 text-[#F28B75]" aria-hidden="true" /> Streak
+                </dt>
+                <dd className="font-display text-xl font-bold tabular-nums">
+                  {learner?.streakDays ?? 0}
+                  <span className="text-xs font-medium text-[#4A5851]"> d</span>
+                </dd>
+              </div>
+              <div className="px-1">
+                <dt className="flex items-center justify-center gap-1 text-[11px] text-[#4A5851]">
+                  <Sparkles className="w-3.5 h-3.5 text-[#F6C96B]" aria-hidden="true" />{' '}
+                  {isKids ? 'Stars' : 'XP'}
+                </dt>
+                <dd className="font-display text-xl font-bold tabular-nums">{learner?.xp ?? 0}</dd>
+              </div>
+              <div className="px-1">
+                <dt className="text-[11px] text-[#4A5851]">Level</dt>
+                <dd className="font-display text-xl font-bold">{learner?.cefrLevel || 'A1'}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="rounded-3xl sauti-surface-warm p-5">
+            <p className="text-xs font-mono font-semibold text-[#245C45] mb-3">Practice now</p>
+            <div className="flex flex-col gap-2.5">
               <Link
                 to="/learn/speaking"
                 className="inline-flex items-center gap-2 text-sm font-semibold text-[#245C45] hover:underline"
               >
-                <Mic className="w-4 h-4" /> Speaking Practice
+                <Mic className="w-4 h-4" aria-hidden="true" /> Speaking Practice
               </Link>
               <Link
                 to="/learn/listening"
                 className="inline-flex items-center gap-2 text-sm font-semibold text-[#245C45] hover:underline"
               >
-                <Headphones className="w-4 h-4" /> Listening Practice
+                <Headphones className="w-4 h-4" aria-hidden="true" /> Listening Practice
               </Link>
             </div>
           </div>
-        </RevealItem>
-      </RevealStagger>
+        </div>
+      </section>
 
       {/* Recommended Courses & Achievements */}
       {data && (
