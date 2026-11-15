@@ -75,7 +75,7 @@ export function sanitizeAiErrorMessage(err: unknown, fallbackMessage: string): s
   if (
     status === 404 ||
     status === 'NOT_FOUND' ||
-    /NOT_FOUND|not found|not supported for bidiGenerateContent/i.test(msg)
+    /NOT_FOUND|not found|not supported for bidiGenerateContent|Unexpected server response:\s*404/i.test(msg)
   ) {
     return 'The configured AI model is unavailable or unsupported for this account.';
   }
@@ -83,9 +83,12 @@ export function sanitizeAiErrorMessage(err: unknown, fallbackMessage: string): s
     status === 401 ||
     status === 403 ||
     status === 'PERMISSION_DENIED' ||
-    /API_KEY_INVALID|API key not valid|PERMISSION_DENIED|UNAUTHENTICATED/i.test(msg)
+    /API_KEY_INVALID|API key not valid|PERMISSION_DENIED|UNAUTHENTICATED|Unexpected server response:\s*40[13]/i.test(msg)
   ) {
     return 'AI provider credentials were rejected or lack access to this model. Check GEMINI_API_KEY in Settings > Secrets.';
+  }
+  if (/INVALID_ARGUMENT|code 1007/i.test(msg)) {
+    return 'The Live AI model rejected the session configuration.';
   }
   return fallbackMessage;
 }
@@ -96,6 +99,7 @@ export function getGeminiClient(): GoogleGenAI | null {
     _aiClient = new GoogleGenAI({
       apiKey: env.geminiApiKey,
       httpOptions: {
+        apiVersion: 'v1beta',
         headers: {
           'User-Agent': 'aistudio-build',
         },

@@ -398,6 +398,9 @@ export function attachLiveVoiceWebSocket(server: HttpServer, options?: LiveVoice
           sessionReady = true;
           sendJson({ type: 'ready', model: liveModel });
         } catch (err: unknown) {
+          const rawMsg = err instanceof Error ? err.message : String(err || 'unknown');
+          const safeLogMsg = rawMsg.replace(/key=[^&\s]+/gi, 'key=[redacted]');
+          console.error('[SAUTI Live API] connect failed:', safeLogMsg);
           sendJson({
             type: 'error',
             message: sanitizeAiErrorMessage(err, 'Unable to establish Gemini Live API connection.'),
